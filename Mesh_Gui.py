@@ -63,6 +63,11 @@ class MainWindow(Qt.QMainWindow):
         self.max_cube_ray_action.triggered.connect(self.max_cube_ray)
         editMenu.addAction(self.max_cube_ray_action)
         
+        # inserting maximally inscribed cube via ray tracing
+        self.ext_max_cube_action = Qt.QAction('Extend Max Cube', self)
+        self.ext_max_cube_action.triggered.connect(self.ext_max_cube)
+        editMenu.addAction(self.ext_max_cube_action)
+
         #Create Cone in Mesh
         self.next_cubes_action = Qt.QAction('Next Cubes', self)
         self.next_cubes_action.triggered.connect(self.next_cubes)
@@ -145,7 +150,7 @@ class MainWindow(Qt.QMainWindow):
         self.plotter.add_mesh(mesh, show_edges=True, color="w", opacity=0.6)
         
         # show origin
-        self.plotter.add_axes_at_origin(xlabel='X', ylabel='Y', zlabel='Z', line_width=1, labels_off=False)
+        self.plotter.add_axes_at_origin(xlabel='X', ylabel='Y', zlabel='Z', line_width=3, labels_off=False)
 
         # show floors
         #self.plotter.add_floor('-y')
@@ -207,8 +212,9 @@ class MainWindow(Qt.QMainWindow):
 
     def max_cube_cone(self):
         """ add a maximally inscribed cube within the opened mesh (via cone intersection) """
-        global ranges, max_c1, max_c2
+        global ranges, max_c1, max_c2, nearest_vert
         global face_center, max_cube, max_normal
+        global cube_V, cube_F
 
         # reset plotter
         self.reset_plotter()
@@ -223,8 +229,8 @@ class MainWindow(Qt.QMainWindow):
         ang = float(90 - np.degrees(ang))
         max_c1 = pv.Cone(center=Vol_centroid+[0,0,h/2], direction=[0,0,-1], height=h, radius=None, capping=False, angle=ang, resolution=100)
         max_c2 = pv.Cone(center=Vol_centroid-[0,0,h/2], direction=[0,0,1], height=h, radius=None, capping=False, angle=ang, resolution=100)
-        self.plotter.add_mesh(max_c1,color="r", show_edges=True, opacity=0.4)
-        self.plotter.add_mesh(max_c2,color="r", show_edges=True, opacity=0.4)
+        self.plotter.add_mesh(max_c1, color="r", show_edges=True, opacity=0.4)
+        self.plotter.add_mesh(max_c2, color="r", show_edges=True, opacity=0.4)
         
         # find the nearest possible cube vertex from top cone & mesh intersection
         top_clip = mesh.clip_surface(max_c1, invert=True)
@@ -255,8 +261,8 @@ class MainWindow(Qt.QMainWindow):
         # show max cube
         self.plotter.add_mesh(max_cube, show_edges=True, color="b", opacity=0.6)
 
-        # re-assign V as points of mesh
-        V = np.array(mesh.points)
+        # record nearest vertex
+        nearest_vert = V[p,:]
 
         # find & show max cube face centers
         cell_center = max_cube.cell_centers()
@@ -277,8 +283,9 @@ class MainWindow(Qt.QMainWindow):
 
     def max_cube_ray(self):
         """ add a maximally inscribed cube within the opened mesh (via ray tracing) """
-        global ranges
+        global ranges, nearest_vert
         global face_center, max_cube, max_normal
+        global cube_V, cube_F
 
         # reset plotter
         self.reset_plotter()
@@ -291,12 +298,10 @@ class MainWindow(Qt.QMainWindow):
 
         # find the nearest possible cube vertex from top rays & mesh intersection
         top_vert = self.vert_ray(Vol_centroid, 'z')
-        #top_vert = np.array(top_pts.points)
         top = self.nearest_pt(top_vert, Vol_centroid)
 
         # find the nearest possible cube vertex from bottom rays & mesh intersection
         bottom_vert = self.vert_ray(Vol_centroid, '-z')
-        #bottom_vert = np.array(bottom_pts.points)
         bottom = self.nearest_pt(bottom_vert, Vol_centroid)        
 
         # find the nearest possible cube vertex between the two
@@ -312,8 +317,8 @@ class MainWindow(Qt.QMainWindow):
         max_cube = pv.PolyData(cube_V, cube_F)
         self.plotter.add_mesh(max_cube, show_edges=True, color="b", opacity=0.6)
 
-        # re-assign V as points of mesh
-        V = np.array(mesh.points)
+        # record nearest vertex
+        nearest_vert = V[p,:]
 
         # find & show max cube face centers
         cell_center = max_cube.cell_centers()
@@ -436,7 +441,6 @@ class MainWindow(Qt.QMainWindow):
             
     def create_cube(self, vertex, starting_pt, dir):
         ''' create cube from the nearest pt & centroid '''
-
         # find the other 7 vertices
         # 3 vertices can be found by rotating the first point 90 degrees 3 times around Z axis of centroid
         # 4 vertices can be found by translating the first four vertices twice the half edge
@@ -487,7 +491,58 @@ class MainWindow(Qt.QMainWindow):
                         [4,4,5,6,7]])
 
         return cube_V, cube_F
+    
+    def ext_max_cube(self):
+        ''' extend max cube into maximally inscribed cuboid '''
+        global face_center, ext_max_cube
+
+        # find the 3 out of 6 normal directions the max cube can be extended towards
+        ext_dir = np.empty(shape=(3,3)) 
+        main_dir = Vol_centroid - nearest_vert
+        ind = 0
+        for i in range(0, 6):
+            if np.dot(max_normal[i,:], main_dir) > 0:
+                ext_dir[ind,:] = max_normal[i,:]
+                ind +=1
+
+        # extend faces by shooting a ray from the 4 vertices on each extendable face
+        # in the direction of its face normal. Find the nearest intersection and
+        # it would be the limit of extension for that face
+        for i in range(0, 3):
+            F_ind = np.where((max_normal == ext_dir[i]).all(axis=1))
+            np.reshape(cube_F, (6,5))
+            faces = np.reshape(cube_F, (6,5))
+            V_ind = faces[F_ind][0,1:5]
+            current_V = np.vstack([cube_V[V_ind[0]], cube_V[V_ind[1]], cube_V[V_ind[2]], cube_V[V_ind[3]]])
+            ext_V = self.ext_ray(current_V, ext_dir[i])
+            cube_V[V_ind] = ext_V
+
+        # create & show extended max cube
+        ext_max_cube = pv.PolyData(cube_V, cube_F)
+        self.plotter.add_mesh(ext_max_cube, show_edges=True, color="y", opacity=0.6)
+
+        # find face centers of extended max cube
+        cell_center = ext_max_cube.cell_centers()
+        face_center = np.array(cell_center.points)
+
+    def ext_ray(self, current_V, ext_dir):
+        ''' shoot rays from vertices of a cube face towards face normal & obtain intersections with mesh '''
+        # initialize variables
+        ext_end = current_V + ext_dir * np.ones((4,1))
+        ext_int = [None] * 4
+        ext_dis = np.zeros(4)
+
+        # perform ray tracing per extending face vertex
+        for i in range(0,4):
+            ext_int, ind = mesh.ray_trace(current_V[i], ext_end[i])
+            ext_dis[i] = np.sqrt((ext_int[0][0] - current_V[i][0])**2 + (ext_int[0][1] - current_V[i][1])**2
+                                 + (ext_int[0][2] - current_V[i][2])**2)
+
+        # extend vertices by the shortest intersection distance
+        ext_V = current_V + ext_dir * np.ones((4,1)) * min(ext_dis)
         
+        return ext_V
+
     def next_cubes(self):
         ''' create cubes within the mesh from the face centers of the first cube'''
         # project 6 cones from max cube face centers
@@ -552,16 +607,16 @@ class MainWindow(Qt.QMainWindow):
         # show next cubes
         #self.plotter.add_mesh(x_cube1, show_edges=True, color="b", opacity=0.6)
         #self.plotter.add_mesh(x_cube2, show_edges=True, color="b", opacity=0.6)
-        #self.plotter.add_mesh(y_cube1, show_edges=True, color="b", opacity=0.6)
-        #self.plotter.add_mesh(y_cube2, show_edges=True, color="b", opacity=0.6)
-        self.plotter.add_mesh(z_cube1, show_edges=True, color="b", opacity=0.6)
-        self.plotter.add_mesh(z_cube2, show_edges=True, color="b", opacity=0.6)
+        self.plotter.add_mesh(y_cube1, show_edges=True, color="b", opacity=0.6)
+        self.plotter.add_mesh(y_cube2, show_edges=True, color="b", opacity=0.6)
+        #self.plotter.add_mesh(z_cube1, show_edges=True, color="b", opacity=0.6)
+        #self.plotter.add_mesh(z_cube2, show_edges=True, color="b", opacity=0.6)
 
     def cube_hslice(self):
         """ slice mesh horizontally based on internal cubes """
         # reset plotter
         self.reset_plotter()
-
+        
         # create sliced parts
         part1 = mesh.clip_closed_surface('z', origin=face_center[0])
         part2_a = mesh.clip_closed_surface('-z', origin=face_center[0])
