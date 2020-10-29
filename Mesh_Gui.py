@@ -390,24 +390,26 @@ class MainWindow(Qt.QMainWindow):
         r8_int = pv.PolyData(r8_pts[0])
 
         # show rays
-        self.plotter.add_mesh(r1, color='r', line_width=3)
-        self.plotter.add_mesh(r2, color='r', line_width=3)
-        self.plotter.add_mesh(r3, color='r', line_width=3)
-        self.plotter.add_mesh(r4, color='r', line_width=3)
-        self.plotter.add_mesh(r5, color='r', line_width=3)
-        self.plotter.add_mesh(r6, color='r', line_width=3)
-        self.plotter.add_mesh(r7, color='r', line_width=3)
-        self.plotter.add_mesh(r8, color='r', line_width=3)
+        l_wid = 5
+        self.plotter.add_mesh(r1, color='r', line_width=l_wid)
+        self.plotter.add_mesh(r2, color='r', line_width=l_wid)
+        self.plotter.add_mesh(r3, color='r', line_width=l_wid)
+        self.plotter.add_mesh(r4, color='r', line_width=l_wid)
+        self.plotter.add_mesh(r5, color='r', line_width=l_wid)
+        self.plotter.add_mesh(r6, color='r', line_width=l_wid)
+        self.plotter.add_mesh(r7, color='r', line_width=l_wid)
+        self.plotter.add_mesh(r8, color='r', line_width=l_wid)
 
         # show intersections
-        self.plotter.add_mesh(r1_int, color='r', point_size=20)
-        self.plotter.add_mesh(r2_int, color='r', point_size=20)
-        self.plotter.add_mesh(r3_int, color='r', point_size=20)
-        self.plotter.add_mesh(r4_int, color='r', point_size=20)
-        self.plotter.add_mesh(r5_int, color='r', point_size=20)
-        self.plotter.add_mesh(r6_int, color='r', point_size=20)
-        self.plotter.add_mesh(r7_int, color='r', point_size=20)
-        self.plotter.add_mesh(r8_int, color='r', point_size=20)
+        pt_size = 20
+        self.plotter.add_mesh(r1_int, color='r', point_size=pt_size)
+        self.plotter.add_mesh(r2_int, color='r', point_size=pt_size)
+        self.plotter.add_mesh(r3_int, color='r', point_size=pt_size)
+        self.plotter.add_mesh(r4_int, color='r', point_size=pt_size)
+        self.plotter.add_mesh(r5_int, color='r', point_size=pt_size)
+        self.plotter.add_mesh(r6_int, color='r', point_size=pt_size)
+        self.plotter.add_mesh(r7_int, color='r', point_size=pt_size)
+        self.plotter.add_mesh(r8_int, color='r', point_size=pt_size)
 
         # array of intersections (assume 1 intersection per ray)
         r_int = np.vstack([r1_int.points, r2_int.points, r3_int.points, r4_int.points,
