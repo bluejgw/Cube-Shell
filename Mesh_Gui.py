@@ -221,8 +221,8 @@ class MainWindow(Qt.QMainWindow):
         h = (abs(ranges[4]) + abs(ranges[5]))/3
         ang = np.arctan(0.5/(np.sqrt(2)/2))
         ang = float(90 - np.degrees(ang))
-        max_c1 = pv.Cone(center=Vol_centroid+[0,0,h/2], direction=[0,0,-1], height=h, radius=None, capping=False, angle=ang, resolution=8)
-        max_c2 = pv.Cone(center=Vol_centroid-[0,0,h/2], direction=[0,0,1], height=h, radius=None, capping=False, angle=ang, resolution=8)
+        max_c1 = pv.Cone(center=Vol_centroid+[0,0,h/2], direction=[0,0,-1], height=h, radius=None, capping=False, angle=ang, resolution=100)
+        max_c2 = pv.Cone(center=Vol_centroid-[0,0,h/2], direction=[0,0,1], height=h, radius=None, capping=False, angle=ang, resolution=100)
         self.plotter.add_mesh(max_c1,color="r", show_edges=True, opacity=0.4)
         self.plotter.add_mesh(max_c2,color="r", show_edges=True, opacity=0.4)
         
@@ -422,7 +422,6 @@ class MainWindow(Qt.QMainWindow):
         center and nearest vertex as cube vertex, it falls inside the volume """
         # find nearest point from the list of points
         c = len(vert)
-        print(vert.shape)
         dist = np.zeros(c)
         for i in range(0, c):
             dist[i] = np.sqrt((vert[i,0] - starting_pt[0])**2 + (vert[i,1] - starting_pt[1])**2
@@ -499,22 +498,43 @@ class MainWindow(Qt.QMainWindow):
         ang = np.arctan(1/(np.sqrt(2)/2))
         ang = float(90 - np.degrees(ang))
 
+        # from the faces of max cube initialize 6 cones, whose surface
+        # represents possible locations of next cube vertices
         x_c1 = pv.Cone(center=face_center[1] + [h_x/2,0,0], direction = [-1,0,0], height = h_x, radius=None, resolution= 100, angle = ang, capping=False)
         x_c2 = pv.Cone(center=face_center[3] - [h_x/2,0,0], direction = [1,0,0], height = h_x, radius=None, resolution= 100, angle = ang, capping=False)
         y_c1 = pv.Cone(center=face_center[2] + [0,h_y/2,0], direction = [0,-1,0], height = h_y, radius=None, resolution= 100, angle = ang, capping=False)
         y_c2 = pv.Cone(center=face_center[4] - [0,h_y/2,0], direction = [0,1,0], height = h_y, radius=None, resolution= 100, angle = ang, capping=False)
         z_c1 = pv.Cone(center=face_center[0] + [0,0,h_z/2], direction = [0,0,-1], height = h_z, radius=None, resolution= 100, angle = ang, capping=False)
         z_c2 = pv.Cone(center=face_center[5] - [0,0,h_z/2], direction = [0,0,1], height = h_z, radius=None, resolution= 100, angle = ang, capping=False)
+        
         self.plotter.add_mesh(pv.PolyData(face_center[1]), color='y', point_size=10.0, render_points_as_spheres=True)
         self.plotter.add_mesh(x_c1,color="r", opacity=0.2)
 
-        x1 = self.nearest_pt(x_c1, face_center[1])
-        x2 = self.nearest_pt(x_c2, face_center[3])
-        y1 = self.nearest_pt(y_c1, face_center[2])
-        y2 = self.nearest_pt(y_c2, face_center[4])
-        z1 = self.nearest_pt(z_c1, face_center[0])
-        z2 = self.nearest_pt(z_c2, face_center[5])
+        # clip mesh with all cones from max cube face centers
+        x1_clip = mesh.clip_surface(x_c1, invert=True)
+        x2_clip = mesh.clip_surface(x_c2, invert=True)
+        y1_clip = mesh.clip_surface(y_c1, invert=True)
+        y2_clip = mesh.clip_surface(y_c2, invert=True)
+        z1_clip = mesh.clip_surface(z_c1, invert=True)
+        z2_clip = mesh.clip_surface(z_c2, invert=True)
 
+        # find vertices in meshes cipped by cones
+        x1_vert = np.array(x1_clip.points)
+        x2_vert = np.array(x2_clip.points)
+        y1_vert = np.array(y1_clip.points)
+        y2_vert = np.array(y2_clip.points)
+        z1_vert = np.array(z1_clip.points)
+        z2_vert = np.array(z2_clip.points)
+
+        # find nearest vertices in meshes clipped by cones
+        x1 = self.nearest_pt(x1_vert, face_center[1])
+        x2 = self.nearest_pt(x2_vert, face_center[3])
+        y1 = self.nearest_pt(y1_vert, face_center[2])
+        y2 = self.nearest_pt(y2_vert, face_center[4])
+        z1 = self.nearest_pt(z1_vert, face_center[0])
+        z2 = self.nearest_pt(z2_vert, face_center[5])
+
+        # create cubes from nearest vertices
         x_c1_V, x_c1_F = self.create_cube(x1[2][x1[1],:], face_center[1], 'x')
         x_c2_V, x_c2_F = self.create_cube(x2[2][x2[1],:], face_center[3], 'x')
         y_c1_V, y_c1_F = self.create_cube(y1[2][y1[1],:], face_center[2], 'y')
@@ -529,12 +549,13 @@ class MainWindow(Qt.QMainWindow):
         z_cube1 = pv.PolyData(z_c1_V, z_c1_F)
         z_cube2 = pv.PolyData(z_c2_V, z_c2_F)
 
+        # show next cubes
         #self.plotter.add_mesh(x_cube1, show_edges=True, color="b", opacity=0.6)
         #self.plotter.add_mesh(x_cube2, show_edges=True, color="b", opacity=0.6)
         #self.plotter.add_mesh(y_cube1, show_edges=True, color="b", opacity=0.6)
         #self.plotter.add_mesh(y_cube2, show_edges=True, color="b", opacity=0.6)
-        #self.plotter.add_mesh(z_cube1, show_edges=True, color="b", opacity=0.6)
-        #self.plotter.add_mesh(z_cube2, show_edges=True, color="b", opacity=0.6)
+        self.plotter.add_mesh(z_cube1, show_edges=True, color="b", opacity=0.6)
+        self.plotter.add_mesh(z_cube2, show_edges=True, color="b", opacity=0.6)
 
     def cube_hslice(self):
         """ slice mesh horizontally based on internal cubes """
