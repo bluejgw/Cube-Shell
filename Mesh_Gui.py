@@ -498,10 +498,9 @@ class MainWindow(Qt.QMainWindow):
         cube_V_start_center = np.array(pv.PolyData(cube_V_start).center)
         
         # find the translation distance
-        #half_edge = np.ones((4,1)) * [[0, 0, np.sign(starting_pt[2]-vertex[2])]] * np.sqrt((vertex[0]-starting_pt[0])**2 + (vertex[1]-starting_pt[1])**2) * sp.sin(sp.pi/4)
         trans_dis = Vol_centroid - cube_V_start_center
         trans_dir = trans_dis / np.linalg.norm(trans_dis)
-        half_edge = np.ones((4,1)) * [trans_dir] * np.sqrt((vertex[0]-starting_pt[0])**2 + (vertex[1]-starting_pt[1])**2) * sp.sin(sp.pi/4)
+        half_edge = np.ones((4,1)) * [trans_dir] * np.sqrt((vertex[0]-cube_V_start_center[0])**2 + (vertex[1]-cube_V_start_center[1])**2 + (vertex[2]-cube_V_start_center[2])**2) * sp.sin(sp.pi/4)
         cube_trans = np.asarray(2*half_edge, dtype=np.float64)
 
         # construct the cube
@@ -610,7 +609,7 @@ class MainWindow(Qt.QMainWindow):
         z1_clip = mesh.clip_surface(z_c1, invert=True)
         z2_clip = mesh.clip_surface(z_c2, invert=True)
 
-        self.plotter.add_mesh(x1_clip, color="y", opacity=1)
+        self.plotter.add_mesh(x1_clip, color="y", opacity=0.7)
 
         # find vertices in meshes cipped by cones
         x1_vert = np.array(x1_clip.points)
