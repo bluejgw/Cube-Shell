@@ -236,6 +236,7 @@ class MainWindow(Qt.QMainWindow):
 
         # find max cube face normals
         max_normal = pv.PolyData(max_cube_V, max_cube_F).cell_normals
+        # max_normal = np.round(max_normal, 5)
 
         # max cube volume
         max_cube_vol = float(format(max_cube_vol, ".5f"))
@@ -380,7 +381,7 @@ class MainWindow(Qt.QMainWindow):
     def cubic_skeleton(self):
         ''' fill mesh with cubic skeleton'''
         # user input number of rays for next cubes
-        self.plotter.add_text_slider_widget(self.next_cubes_ray, ['3 rays','6 rays','9 rays'], value=2)
+        self.plotter.add_text_slider_widget(self.next_cubes_ray, ['3 rays','6 rays','9 rays'], value=0)
         # self.plotter.add_slider_widget(self.next_cubes_ray, [3, 9], title='Number of Rays')
         
     def next_cubes_ray(self, value):
@@ -400,15 +401,16 @@ class MainWindow(Qt.QMainWindow):
             next_cubes = None
             r_num = 0
 
+        print(next_cubes)
         # remove old rays
         if (r_num != 0) and (r_num == int(value[0])):
             return
         elif (r_num != 0) and (next_cubes != None):
             for i in range(0,6):
                 self.plotter.remove_actor(next_cubes[i])
-        #         for j in range(0, r_num):
-        #             self.plotter.remove_actor(next_rays[i*r_num+j])
-        #             self.plotter.remove_actor(next_ints[i*r_num+j])
+                for j in range(0, r_num):
+                    self.plotter.remove_actor(next_rays[i*r_num+j])
+                    self.plotter.remove_actor(next_ints[i*r_num+j])
 
         # track starting time
         next_cube_start = time.time()
@@ -448,7 +450,14 @@ class MainWindow(Qt.QMainWindow):
             
             for j in range(0, r_num):
                 if j == 0:
-                    r_dir[0] = np.array(max_normal[i] + ([1,1,1] - abs(max_normal[i])) / 2)
+                    if (i == 0) or (i == 5):
+                        r_dir[0] = np.array(max_normal[i] + ([1,1,1] - abs(max_normal[i])) / 2)
+                    else:
+                        x,y = sp.symbols('x,y')
+                        f = sp.Eq(max_normal[i][0]*x + max_normal[i][1]*y, 0)
+                        g = sp.Eq(x**2 + y**2, 0.5**2)
+                        inc = sp.solve([f,g],(x,y))
+                        r_dir[0] = np.array(max_normal[i] + [inc[0][0], inc[0][1], 0.5])
                     r_dir_norm[0] = r_dir[0] / np.linalg.norm(r_dir[0])
                     r_end[0] = face_center[i] + r_dir_norm[0] * r_len
                 else:
@@ -459,8 +468,8 @@ class MainWindow(Qt.QMainWindow):
                 r_pts, r_ind = mesh.ray_trace(face_center[i], r_end[j])
 
                 # show rays
-                # next_rays[i*r_num+j] = self.plotter.add_mesh(pv.Line(face_center[i], r_end[j]), color='w', line_width=l_wid)
-                # next_ints[i*r_num+j] = self.plotter.add_mesh(pv.PolyData(r_pts[0]), color='w', point_size=pt_size)
+                next_rays[i*r_num+j] = self.plotter.add_mesh(pv.Line(face_center[i], r_end[j]), color='w', line_width=l_wid)
+                next_ints[i*r_num+j] = self.plotter.add_mesh(pv.PolyData(r_pts[0]), color='w', point_size=pt_size)
 
                 # create an array of ray intersections
                 r_int = np.append(r_int, r_pts[0])
