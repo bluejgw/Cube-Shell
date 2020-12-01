@@ -170,7 +170,7 @@ class MainWindow(Qt.QMainWindow):
         """ add a maximally inscribed cube within the opened mesh (via ray tracing) """
         global ranges, Vol_centroid
         global face_center, max_cube, max_normal, max_cube_vol
-        global max_cube_V, max_cube_F
+        # global max_cube_V, max_cube_F
         global max_cube_start, max_cube_end, max_cube_run
         global top_rays, top_ints, bottom_rays, bottom_ints
 
@@ -185,24 +185,26 @@ class MainWindow(Qt.QMainWindow):
             max_cube = None
             r_num = 0
 
+        print(r_num)
+        print(max_cube)
         # remove old rays
         if (r_num != 0) and (r_num == int(value[0])):
             return
         elif (r_num != 0) and (max_cube != None):
             self.plotter.remove_actor(max_cube)
-        #     for i in range(0, r_num):
-        #         self.plotter.remove_actor(top_rays[i])
-        #         self.plotter.remove_actor(top_ints[i])
-        #         self.plotter.remove_actor(bottom_rays[i])
-        #         self.plotter.remove_actor(bottom_ints[i])
+            for i in range(0, r_num):
+                self.plotter.remove_actor(top_rays[i])
+                self.plotter.remove_actor(top_ints[i])
+                self.plotter.remove_actor(bottom_rays[i])
+                self.plotter.remove_actor(bottom_ints[i])
 
         # track starting time
         max_cube_start = time.time()
 
-        # find the vertices & the vertex indices of each triangular face
+        # find mesh vertices
         V = np.array(mesh.points)
 
-        # find the max and min of x,y,z axes
+        # find the max and min of x,y,z axes of mesh
         ranges = mesh.bounds
 
         # show centroid
@@ -236,7 +238,6 @@ class MainWindow(Qt.QMainWindow):
 
         # find max cube face normals
         max_normal = pv.PolyData(max_cube_V, max_cube_F).cell_normals
-        # max_normal = np.round(max_normal, 5)
 
         # max cube volume
         max_cube_vol = float(format(max_cube_vol, ".5f"))
@@ -289,8 +290,8 @@ class MainWindow(Qt.QMainWindow):
             r_pts, r_ind = mesh.ray_trace(Vol_centroid, r_end[j])
 
             # show rays
-            # rays[j] = self.plotter.add_mesh(pv.Line(Vol_centroid, r_end[j]), color='w', line_width=l_wid)
-            # ints[j] = self.plotter.add_mesh(pv.PolyData(r_pts[0]), color='w', point_size=pt_size)
+            rays[j] = self.plotter.add_mesh(pv.Line(Vol_centroid, r_end[j]), color='w', line_width=l_wid)
+            ints[j] = self.plotter.add_mesh(pv.PolyData(r_pts[0]), color='w', point_size=pt_size)
 
             # create an array of ray intersections
             r_int = np.append(r_int, r_pts[0])
@@ -381,12 +382,12 @@ class MainWindow(Qt.QMainWindow):
     def cubic_skeleton(self):
         ''' fill mesh with cubic skeleton'''
         # user input number of rays for next cubes
-        self.plotter.add_text_slider_widget(self.next_cubes_ray, ['3 rays','6 rays','9 rays'], value=0)
-        # self.plotter.add_slider_widget(self.next_cubes_ray, [3, 9], title='Number of Rays')
+        self.plotter.add_text_slider_widget(self.max_cube_ray, ['3 rays','6 rays','9 rays'], value=0)
+        # self.plotter.add_text_slider_widget(self.next_cubes_ray, ['3 rays','6 rays','9 rays'], value=0)
         
     def next_cubes_ray(self, value):
         ''' create cubes within the mesh from the face centers of the first cube'''
-        global next_cube_vol, max_normal
+        global next_cube_vol
         global next_rays, next_ints, next_cubes
 
         # find max cube
