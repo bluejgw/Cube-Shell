@@ -43,9 +43,9 @@ class MainWindow(Qt.QMainWindow):
         fileMenu.addAction(exitButton)
 
         #Create secondary cubes
-        self.next_cubes_action = Qt.QAction('Next Cubes', self)
-        self.next_cubes_action.triggered.connect(self.next_cubes)
-        editMenu.addAction(self.next_cubes_action)
+        self.cubic_skeleton_action = Qt.QAction('Cubic Skeleton', self)
+        self.cubic_skeleton_action.triggered.connect(self.cubic_skeleton)
+        editMenu.addAction(self.cubic_skeleton_action)
         
         if show:
             self.show()
@@ -86,7 +86,7 @@ class MainWindow(Qt.QMainWindow):
         print("Mesh Type:", mesh_type[1:])
 
         # show transformed mesh
-        self.plotter.add_mesh(mesh, show_edges=True, color="w", opacity=0.6)
+        #self.plotter.add_mesh(mesh, show_edges=True, color="w", opacity=0.6)
 
         # reset plotter
         self.reset_plotter()
@@ -105,7 +105,7 @@ class MainWindow(Qt.QMainWindow):
         """ clear plotter of mesh or interactive options """
         # clear plotter
         self.plotter.clear()
-        self.plotter.clear_plane_widgets()
+        #self.plotter.clear_plane_widgets()
         #self.plotter.reset_camera()
         
         # callback opened mesh
@@ -166,13 +166,35 @@ class MainWindow(Qt.QMainWindow):
         centroids = np.asarray(centroids)
         Vol_centroid = [Sum_vol_x, Sum_vol_y, Sum_vol_z] / Vol_total
 
-    def max_cube_ray(self):
+    def max_cube_ray(self, value):
         """ add a maximally inscribed cube within the opened mesh (via ray tracing) """
-        global ranges, nearest_vert
+        global ranges, Vol_centroid
         global face_center, max_cube, max_normal, max_cube_vol
         global max_cube_V, max_cube_F
-        global Vol_centroid, V
         global max_cube_start, max_cube_end, max_cube_run
+        global top_rays, top_ints, bottom_rays, bottom_ints
+
+        # bypass error
+        try:
+            top_rays, top_ints, bottom_rays, bottom_ints, max_cube, r_num
+        except NameError:
+            top_rays = None
+            top_ints = None
+            bottom_rays = None
+            bottom_ints = None
+            max_cube = None
+            r_num = 0
+
+        # remove old rays
+        if (r_num != 0) and (r_num == int(value[0])):
+            return
+        elif (r_num != 0) and (max_cube != None):
+            self.plotter.remove_actor(max_cube)
+        #     for i in range(0, r_num):
+        #         self.plotter.remove_actor(top_rays[i])
+        #         self.plotter.remove_actor(top_ints[i])
+        #         self.plotter.remove_actor(bottom_rays[i])
+        #         self.plotter.remove_actor(bottom_ints[i])
 
         # track starting time
         max_cube_start = time.time()
@@ -180,22 +202,19 @@ class MainWindow(Qt.QMainWindow):
         # find the vertices & the vertex indices of each triangular face
         V = np.array(mesh.points)
 
-        # reset plotter
-        self.reset_plotter()
-
-        # show centroid
-        Vol_centroid = np.array([0,0,0])
-        self.plotter.add_mesh(pv.PolyData(Vol_centroid), color='r', point_size=20.0, render_points_as_spheres=True)
-
-        # project rays from centroid to find maximally inscribed cube
+        # find the max and min of x,y,z axes
         ranges = mesh.bounds
 
+        # show centroid
+        Vol_centroid = np.array([0,0,0]) # overwrite centroid with origin at principle axes
+        self.plotter.add_mesh(pv.PolyData(Vol_centroid), color='r', point_size=20.0, render_points_as_spheres=True)
+
         # find the nearest possible cube vertex from top rays & mesh intersection
-        top_vert = self.cube_center_ray(Vol_centroid, 'z')
+        top_vert, top_rays, top_ints = self.cube_center_ray(Vol_centroid, 'z', value)
         top = self.nearest_pt(top_vert, Vol_centroid)
 
         # find the nearest possible cube vertex from bottom rays & mesh intersection
-        bottom_vert = self.cube_center_ray(Vol_centroid, '-z')
+        bottom_vert, bottom_rays, bottom_ints = self.cube_center_ray(Vol_centroid, '-z', value)
         bottom = self.nearest_pt(bottom_vert, Vol_centroid)
 
         # find the nearest possible cube vertex between the two
@@ -208,19 +227,15 @@ class MainWindow(Qt.QMainWindow):
         
         # create and show max cube
         max_cube_V, max_cube_F, max_cube_vol = self.create_cube(V[p,:], Vol_centroid, np.array([0,0,Vol_centroid[2]]))
-        max_cube = pv.PolyData(max_cube_V, max_cube_F)
-        self.plotter.add_mesh(max_cube, show_edges=True, line_width=3, color="g", opacity=0.6)
-
-        # record nearest vertex
-        nearest_vert = V[p,:]
+        max_cube = self.plotter.add_mesh(pv.PolyData(max_cube_V, max_cube_F), show_edges=True, line_width=3, color="g", opacity=0.6)
 
         # find & show max cube face centers
-        cell_center = max_cube.cell_centers()
+        cell_center = pv.PolyData(max_cube_V, max_cube_F).cell_centers()
         face_center = np.array(cell_center.points)
         #self.plotter.add_mesh(cell_center, color="r", point_size=8, render_points_as_spheres=True)
 
         # find max cube face normals
-        max_normal = max_cube.cell_normals
+        max_normal = pv.PolyData(max_cube_V, max_cube_F).cell_normals
 
         # max cube volume
         max_cube_vol = float(format(max_cube_vol, ".5f"))
@@ -230,100 +245,57 @@ class MainWindow(Qt.QMainWindow):
         max_cube_end = time.time()
         max_cube_run = max_cube_end - max_cube_start
 
-    def cube_center_ray(self, start, dir):
-        ''' from starting point shoot out 8 rays to find vertices of a possible cube,
-        whose face normals would be in either in x,y,z direction, or rotated 45 deg along z-axis '''
-        # set ray directions
-        if dir == 'z':
-            r1_dir = np.array([1,1,1])
-            #r2_dir = np.array([1,0,1])
-            r3_dir = np.array([1,-1,1])
-            #r4_dir = np.array([0,-1,1])
-            r5_dir = np.array([-1,-1,1])
-            #r6_dir = np.array([-1,0,1])
-            r7_dir = np.array([-1,1,1])
-            #r8_dir = np.array([0,1,1])
-        elif dir == '-z':
-            r1_dir = np.array([1,1,-1])
-            #r2_dir = np.array([1,0,-1])
-            r3_dir = np.array([1,-1,-1])
-            #r4_dir = np.array([0,-1,-1])
-            r5_dir = np.array([-1,-1,-1])
-            #r6_dir = np.array([-1,0,-1])
-            r7_dir = np.array([-1,1,-1])
-            #r8_dir = np.array([0,1,-1])
+        return
+
+    def cube_center_ray(self, start, dir, value):
+        ''' from starting point shoot out n rays to find vertices of possible cubes '''
+        global r_num
+
+        # initialize variables
+        r_num = int(value[0])
+        r_rot = 2*np.pi/r_num
+        l_wid = 5
+        pt_size = 20
+        ray_size = np.zeros((r_num, 3))
+        r_dir = ray_size
+        r_dir_norm = ray_size
+        r_end = ray_size
+        rays = [0] * r_num
+        ints = [0] * r_num
+        r_int = []
 
         # set ray length
         r_len = abs(ranges[4] - ranges[5])/2 * np.sqrt(0.5**2 + (np.sqrt(2)/2)**2)
-
-        # set ray end points
-        r1_end = start + r1_dir / np.linalg.norm(r1_dir) * r_len
-        #r2_end = start + r2_dir / np.linalg.norm(r2_dir) * r_len
-        r3_end = start + r3_dir / np.linalg.norm(r3_dir) * r_len
-        #r4_end = start + r4_dir / np.linalg.norm(r4_dir) * r_len
-        r5_end = start + r5_dir / np.linalg.norm(r5_dir) * r_len
-        #r6_end = start + r6_dir / np.linalg.norm(r6_dir) * r_len
-        r7_end = start + r7_dir / np.linalg.norm(r7_dir) * r_len
-        #r8_end = start + r8_dir / np.linalg.norm(r8_dir) * r_len
         
-        # perform ray trace
-        r1_pts, r1_ind = mesh.ray_trace(start, r1_end)
-        #r2_pts, r2_ind = mesh.ray_trace(start, r2_end)
-        r3_pts, r3_ind = mesh.ray_trace(start, r3_end)
-        #r4_pts, r4_ind = mesh.ray_trace(start, r4_end)
-        r5_pts, r5_ind = mesh.ray_trace(start, r5_end)
-        #r6_pts, r6_nd = mesh.ray_trace(start, r6_end)
-        r7_pts, r7_ind = mesh.ray_trace(start, r7_end)
-        #r8_pts, r8_ind = mesh.ray_trace(start, r8_end)
+        for j in range(0, r_num):
+            if (j == 0) and (dir == 'z'):
+                r_dir[0] = np.array([0.5, 0.5, 0.5])
+                r_dir_norm[0] = r_dir[0] / np.linalg.norm(r_dir[0])
+                r_end[0] = Vol_centroid + r_dir_norm[0] * r_len
+                # set rotation matrix about 'z'
+                R = self.rot_axis(np.array([0,0,1]))
+            elif (j == 0) and (dir == '-z'):
+                r_dir[0] = np.array([0.5, 0.5, -0.5])
+                r_dir_norm[0] = r_dir[0] / np.linalg.norm(r_dir[0])
+                r_end[0] = Vol_centroid + r_dir_norm[0] * r_len
+                # set rotation matrix about '-z'
+                R = self.rot_axis(np.array([0,0,-1]))
+            else:
+                r_end[j] = np.dot(R(j*r_rot), (r_end[0]-Vol_centroid).T).T
+                r_end[j] = r_end[j] + Vol_centroid
 
-        # initialize rays
-        r1 = pv.Line(start, r1_end)
-        #r2 = pv.Line(start, r2_end)
-        r3 = pv.Line(start, r3_end)
-        #r4 = pv.Line(start, r4_end)
-        r5 = pv.Line(start, r5_end)
-        #r6 = pv.Line(start, r6_end)
-        r7 = pv.Line(start, r7_end)
-        #r8 = pv.Line(start, r8_end)
+            # perform ray trace
+            r_pts, r_ind = mesh.ray_trace(Vol_centroid, r_end[j])
 
-        # initialize intersections
-        r1_int = pv.PolyData(r1_pts[0])
-        #r2_int = pv.PolyData(r2_pts[0])
-        r3_int = pv.PolyData(r3_pts[0])
-        #r4_int = pv.PolyData(r4_pts[0])
-        r5_int = pv.PolyData(r5_pts[0])
-        #r6_int = pv.PolyData(r6_pts[0])
-        r7_int = pv.PolyData(r7_pts[0])
-        #r8_int = pv.PolyData(r8_pts[0])
+            # show rays
+            # rays[j] = self.plotter.add_mesh(pv.Line(Vol_centroid, r_end[j]), color='w', line_width=l_wid)
+            # ints[j] = self.plotter.add_mesh(pv.PolyData(r_pts[0]), color='w', point_size=pt_size)
 
-        # show rays
-        l_wid = 6
-        #self.plotter.add_mesh(r1, color='w', line_width=l_wid)
-        #self.plotter.add_mesh(r2, color='w', line_width=l_wid)
-        #self.plotter.add_mesh(r3, color='w', line_width=l_wid)
-        #self.plotter.add_mesh(r4, color='w', line_width=l_wid)
-        #self.plotter.add_mesh(r5, color='w', line_width=l_wid)
-        #self.plotter.add_mesh(r6, color='w', line_width=l_wid)
-        #self.plotter.add_mesh(r7, color='w', line_width=l_wid)
-        #self.plotter.add_mesh(r8, color='w', line_width=l_wid)
-
-        # show intersections
-        pt_size = 20
-        #self.plotter.add_mesh(r1_int, color='w', point_size=pt_size)
-        #self.plotter.add_mesh(r2_int, color='w', point_size=pt_size)
-        #self.plotter.add_mesh(r3_int, color='w', point_size=pt_size)
-        #self.plotter.add_mesh(r4_int, color='w', point_size=pt_size)
-        #self.plotter.add_mesh(r5_int, color='w', point_size=pt_size)
-        #self.plotter.add_mesh(r6_int, color='w', point_size=pt_size)
-        #elf.plotter.add_mesh(r7_int, color='w', point_size=pt_size)
-        #self.plotter.add_mesh(r8_int, color='w', point_size=pt_size)
-
-        # array of intersections
-        # r_int = np.vstack([r1_int.points, r2_int.points, r3_int.points, r4_int.points,
-        #             r5_int.points, r6_int.points, r7_int.points, r8_int.points])
-        r_int = np.vstack([r1_int.points, r3_int.points, r5_int.points, r7_int.points])
-
-        return r_int
+            # create an array of ray intersections
+            r_int = np.append(r_int, r_pts[0])
+        
+        r_int = np.reshape(r_int, (r_num,3))
+        return r_int, rays, ints
 
     def nearest_pt(self, vert, starting_pt):
         """ find nearest vertex: for segmented convex manifold, a cube with volume centroid as 
@@ -341,16 +313,6 @@ class MainWindow(Qt.QMainWindow):
         p = p[0].item()
 
         return nearest, p, vert
-            
-    def rot_axis(self, axis):
-        ''' create a rotational matrix about an arbitrary axis '''
-        t = sp.Symbol('t')
-
-        R_t = Matrix([[sp.cos(t)+axis[0]**2*(1-sp.cos(t)), axis[0]*axis[1]*(1-sp.cos(t))-axis[2]*sp.sin(t), axis[0]*axis[2]*(1-sp.cos(t))+axis[1]*sp.sin(t)],
-            [axis[1]*axis[0]*(1-sp.cos(t))+axis[2]*sp.sin(t), sp.cos(t)+axis[1]**2*(1-sp.cos(t)), axis[1]*axis[2]*(1-sp.cos(t))-axis[0]*sp.sin(t)],
-            [axis[2]*axis[0]*(1-sp.cos(t))-axis[1]*sp.sin(t), axis[2]*axis[1]*(1-sp.cos(t))+axis[0]*sp.sin(t), sp.cos(t)+axis[2]**2*(1-sp.cos(t))]])
-        R = lambdify(t, R_t)
-        return R
 
     def create_cube(self, vertex, starting_pt, axis):
         ''' create cube from the nearest pt & centroid '''
@@ -381,7 +343,7 @@ class MainWindow(Qt.QMainWindow):
 
         # show nearest vertex of cube
         V_1 = np.array(vertex)
-        #self.plotter.add_mesh(pv.PolyData(V_1), color="y", point_size=30.0, render_points_as_spheres=True)
+        # self.plotter.add_mesh(pv.PolyData(V_1), color="y", point_size=30.0, render_points_as_spheres=True)
         
         # find the translation distance
         trans_dis = starting_pt - cube_V_start_center
@@ -405,31 +367,60 @@ class MainWindow(Qt.QMainWindow):
 
         return cube_V, cube_F, cube_vol
 
-    def next_cubes(self):
-        # reset plotter
-        self.plotter.clear()
-        self.plotter.add_mesh(mesh, show_edges=True, color="w", opacity=0.6)
-        self.max_cube_ray()
+    def rot_axis(self, axis):
+        ''' create a rotational matrix about an arbitrary axis '''
+        t = sp.Symbol('t')
 
+        R_t = Matrix([[sp.cos(t)+axis[0]**2*(1-sp.cos(t)), axis[0]*axis[1]*(1-sp.cos(t))-axis[2]*sp.sin(t), axis[0]*axis[2]*(1-sp.cos(t))+axis[1]*sp.sin(t)],
+            [axis[1]*axis[0]*(1-sp.cos(t))+axis[2]*sp.sin(t), sp.cos(t)+axis[1]**2*(1-sp.cos(t)), axis[1]*axis[2]*(1-sp.cos(t))-axis[0]*sp.sin(t)],
+            [axis[2]*axis[0]*(1-sp.cos(t))-axis[1]*sp.sin(t), axis[2]*axis[1]*(1-sp.cos(t))+axis[0]*sp.sin(t), sp.cos(t)+axis[2]**2*(1-sp.cos(t))]])
+        R = lambdify(t, R_t)
+        return R
+
+    def cubic_skeleton(self):
+        ''' fill mesh with cubic skeleton'''
         # user input number of rays for next cubes
-        self.plotter.add_slider_widget(self.next_cubes_ray, [3, 9], title='Number of Rays')
-        # if (a != value):
-        #     self.plotter.clear()
-        #     self.plotter.add_mesh(mesh, show_edges=True, color="w", opacity=0.6)
-        #     self.max_cube_ray()
+        self.plotter.add_text_slider_widget(self.next_cubes_ray, ['3 rays','6 rays','9 rays'], value=2)
+        # self.plotter.add_slider_widget(self.next_cubes_ray, [3, 9], title='Number of Rays')
         
     def next_cubes_ray(self, value):
         ''' create cubes within the mesh from the face centers of the first cube'''
         global next_cube_vol, max_normal
+        global next_rays, next_ints, next_cubes
+
+        # find max cube
+        self.max_cube_ray(value)
+
+        # bypass error
+        try:
+            next_rays, next_ints, next_cubes, r_num
+        except NameError:
+            next_rays = None
+            next_ints = None
+            next_cubes = None
+            r_num = 0
+
+        # remove old rays
+        if (r_num != 0) and (r_num == int(value[0])):
+            return
+        elif (r_num != 0) and (next_cubes != None):
+            for i in range(0,6):
+                self.plotter.remove_actor(next_cubes[i])
+        #         for j in range(0, r_num):
+        #             self.plotter.remove_actor(next_rays[i*r_num+j])
+        #             self.plotter.remove_actor(next_ints[i*r_num+j])
 
         # track starting time
         next_cube_start = time.time()
 
-        # initiate variable
+        # initiate variables
         next_cube_vol_sum = 0
-        r_num = int(value)
+        r_num = int(value[0])
         r_rot = 2*np.pi/r_num
-
+        next_cubes = [0] * 6
+        next_rays = [0] * 6 * r_num
+        next_ints = [0] * 6 * r_num
+        
         # fix max_normal
         normal = face_center[0] - Vol_centroid
         if (np.sign(normal[2]) != np.sign(max_normal[0,2])):
@@ -468,8 +459,8 @@ class MainWindow(Qt.QMainWindow):
                 r_pts, r_ind = mesh.ray_trace(face_center[i], r_end[j])
 
                 # show rays
-                self.plotter.add_mesh(pv.Line(face_center[i], r_end[j]), color='w', line_width=l_wid)
-                self.plotter.add_mesh(pv.PolyData(r_pts[0]), color='w', point_size=pt_size)
+                # next_rays[i*r_num+j] = self.plotter.add_mesh(pv.Line(face_center[i], r_end[j]), color='w', line_width=l_wid)
+                # next_ints[i*r_num+j] = self.plotter.add_mesh(pv.PolyData(r_pts[0]), color='w', point_size=pt_size)
 
                 # create an array of ray intersections
                 r_int = np.append(r_int, r_pts[0])
@@ -480,12 +471,11 @@ class MainWindow(Qt.QMainWindow):
 
             # create cube from nearest vertice
             next_cube_V, next_cube_F, next_cube_vol = self.create_cube(r[2][r[1],:], face_center[i], max_normal[i])
-            next_cube = pv.PolyData(next_cube_V, next_cube_F)
-            self.plotter.add_mesh(next_cube, show_edges=True, line_width=3, color="g", opacity=0.6)
+            next_cubes[i] = self.plotter.add_mesh(pv.PolyData(next_cube_V, next_cube_F), show_edges=True, line_width=3, color="g", opacity=0.6)
 
             # next cube volume
             next_cube_vol_sum = next_cube_vol_sum + next_cube_vol
-        
+
         # show packing efficiency
         next_cube_vol_sum = float(format(next_cube_vol_sum, ".5f"))
         pack_vol = float(format((max_cube_vol + next_cube_vol_sum), ".5f"))
