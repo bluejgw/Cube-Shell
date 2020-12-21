@@ -165,10 +165,19 @@ class MainWindow(Qt.QMainWindow):
         # find & show centroid
         centroids = np.asarray(centroids)
         Vol_centroid = [Sum_vol_x, Sum_vol_y, Sum_vol_z] / Vol_total
+    
+    def cubic_skeleton(self):
+        ''' fill mesh with cubic skeleton'''
+        global next_rays, next_ints, next_cubes
+        global top_rays, top_ints, bottom_rays, bottom_ints, max_cube
 
+        # user input number of rays for next cubes
+        # self.plotter.add_text_slider_widget(self.max_cube_ray, ['3 rays','6 rays','9 rays'], value=0)
+        self.plotter.add_text_slider_widget(self.next_cubes_ray, ['3 rays','6 rays','9 rays'], value=0)
+        
     def max_cube_ray(self, value):
         """ add a maximally inscribed cube within the opened mesh (via ray tracing) """
-        global ranges, Vol_centroid
+        global x_range, y_range, z_range, Vol_centroid
         global face_center, max_cube, max_normal, max_cube_vol
         # global max_cube_V, max_cube_F
         global max_cube_start, max_cube_end, max_cube_run
@@ -185,8 +194,6 @@ class MainWindow(Qt.QMainWindow):
             max_cube = None
             r_num = 0
 
-        print(r_num)
-        print(max_cube)
         # remove old rays
         if (r_num != 0) and (r_num == int(value[0])):
             return
@@ -206,6 +213,9 @@ class MainWindow(Qt.QMainWindow):
 
         # find the max and min of x,y,z axes of mesh
         ranges = mesh.bounds
+        x_range = abs(ranges[0] - ranges[1])
+        y_range = abs(ranges[2] - ranges[3])
+        z_range = abs(ranges[4] - ranges[5])
 
         # show centroid
         Vol_centroid = np.array([0,0,0]) # overwrite centroid with origin at principle axes
@@ -267,8 +277,10 @@ class MainWindow(Qt.QMainWindow):
         r_int = []
 
         # set ray length
-        r_len = abs(ranges[4] - ranges[5])/2 * np.sqrt(0.5**2 + (np.sqrt(2)/2)**2)
+        r_len = np.sqrt((x_range/2)**2 + (y_range/2)**2 + (z_range/2)**2)
+        # r_len = abs(ranges[4] - ranges[5])/2 * np.sqrt(0.5**2 + (np.sqrt(2)/2)**2)
         
+        # create rays by rotating the first, which creates the cube with xyz axes as its face normals
         for j in range(0, r_num):
             if (j == 0) and (dir == 'z'):
                 r_dir[0] = np.array([0.5, 0.5, 0.5])
@@ -345,7 +357,7 @@ class MainWindow(Qt.QMainWindow):
 
         # show nearest vertex of cube
         V_1 = np.array(vertex)
-        # self.plotter.add_mesh(pv.PolyData(V_1), color="y", point_size=30.0, render_points_as_spheres=True)
+        self.plotter.add_mesh(pv.PolyData(V_1), color="y", point_size=30.0, render_points_as_spheres=True)
         
         # find the translation distance
         trans_dis = starting_pt - cube_V_start_center
@@ -379,15 +391,9 @@ class MainWindow(Qt.QMainWindow):
         R = lambdify(t, R_t)
         return R
 
-    def cubic_skeleton(self):
-        ''' fill mesh with cubic skeleton'''
-        # user input number of rays for next cubes
-        self.plotter.add_text_slider_widget(self.max_cube_ray, ['3 rays','6 rays','9 rays'], value=0)
-        # self.plotter.add_text_slider_widget(self.next_cubes_ray, ['3 rays','6 rays','9 rays'], value=0)
-        
     def next_cubes_ray(self, value):
         ''' create cubes within the mesh from the face centers of the first cube'''
-        global next_cube_vol
+        global next_cube_vol, max_normal
         global next_rays, next_ints, next_cubes
 
         # find max cube
@@ -403,6 +409,7 @@ class MainWindow(Qt.QMainWindow):
             r_num = 0
 
         print(next_cubes)
+        print(next_ints)
         # remove old rays
         if (r_num != 0) and (r_num == int(value[0])):
             return
@@ -443,10 +450,7 @@ class MainWindow(Qt.QMainWindow):
             # initialize ray trace parameters
             l_wid = 3
             pt_size = 10
-            x_range = abs(ranges[0] - ranges[1])
-            y_range = abs(ranges[2] - ranges[3])
-            z_range = abs(ranges[4] - ranges[5])
-            r_len = np.sqrt((x_range/2)**2 + (y_range/2)**2 + (z_range/2)**2) * np.sqrt(1**2 + (np.sqrt(2)/2)**2)
+            r_len = np.sqrt((x_range/2)**2 + (y_range/2)**2 + (z_range/2)**2)
             r_int = np.array([])
             
             for j in range(0, r_num):
