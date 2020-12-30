@@ -48,9 +48,9 @@ class MainWindow(Qt.QMainWindow):
         editMenu.addAction(self.cubic_skeleton_action)
 
         # split mesh based on max cube faces
-        self.max_cube_slice_action = Qt.QAction('Slice27', self)
-        self.cubic_skeleton_action.triggered.connect(self.max_cube_slice)
-        editMenu.addAction(self.max_cube_slice_action)
+        # self.max_cube_slice_action = Qt.QAction('Slice27', self)
+        # self.cubic_skeleton_action.triggered.connect(self.max_cube_slice)
+        # editMenu.addAction(self.max_cube_slice_action)
         
         if show:
             self.show()
@@ -173,37 +173,39 @@ class MainWindow(Qt.QMainWindow):
     
     def cubic_skeleton(self):
         ''' fill mesh with cubic skeleton'''
-        global next_rays, next_ints, next_cubes
-        global top_rays, top_ints, bottom_rays, bottom_ints, max_cube
+        global max_cube_stored
+        
+        max_cube_stored = 0
 
         # user input number of rays for next cubes
-        self.plotter.add_text_slider_widget(self.max_cube_ray, ['3 rays','6 rays','9 rays'], value=0)
-        # self.plotter.add_text_slider_widget(self.next_cubes_ray, ['3 rays','6 rays','9 rays'], value=0)
+        # self.plotter.add_text_slider_widget(self.max_cube_ray, ['10 rays','15 rays', '20 rays'], value=0)
+        self.plotter.add_text_slider_widget(self.next_cubes_ray, ['10 rays','15 rays', '20 rays'], value=0)
+        # self.max_cube_slice()
         
     def max_cube_ray(self, value):
         """ add a maximally inscribed cube within the opened mesh (via ray tracing) """
         global x_range, y_range, z_range, Vol_centroid
-        global face_center, max_cube, max_normal, max_cube_vol
-        # global max_cube_V, max_cube_F
+        global face_center, max_normal, max_cube_vol, max_cube
         global max_cube_start, max_cube_end, max_cube_run
         global top_rays, top_ints, bottom_rays, bottom_ints
 
         # bypass error
         try:
-            top_rays, top_ints, bottom_rays, bottom_ints, max_cube, r_num
+            top_rays, top_ints, bottom_rays, bottom_ints, max_cube, r_num, max_cube_stored
         except NameError:
             top_rays = None
             top_ints = None
             bottom_rays = None
             bottom_ints = None
             max_cube = None
+            max_cube_stored = None
             r_num = 0
 
         # remove old rays
         if (r_num != 0) and (r_num == int(value[0])):
             return
-        elif (r_num != 0) and (max_cube != None):
-            self.plotter.remove_actor(max_cube)
+        elif (r_num != 0) and (max_cube_stored != None):
+            self.plotter.remove_actor(max_cube_stored)
             for i in range(0, r_num):
                 self.plotter.remove_actor(top_rays[i])
                 self.plotter.remove_actor(top_ints[i])
@@ -228,11 +230,11 @@ class MainWindow(Qt.QMainWindow):
 
         # find the nearest possible cube vertex from top rays & mesh intersection
         top_vert, top_rays, top_ints = self.cube_center_ray(Vol_centroid, 'z', value)
-        top = self.nearest_pt(top_vert, Vol_centroid)
+        top = self.furthest_pt(top_vert, Vol_centroid)
 
         # find the nearest possible cube vertex from bottom rays & mesh intersection
         bottom_vert, bottom_rays, bottom_ints = self.cube_center_ray(Vol_centroid, '-z', value)
-        bottom = self.nearest_pt(bottom_vert, Vol_centroid)
+        bottom = self.furthest_pt(bottom_vert, Vol_centroid)
 
         # find the nearest possible cube vertex between the two
         if top[0] < bottom[0]:
@@ -245,6 +247,7 @@ class MainWindow(Qt.QMainWindow):
         # create and show max cube
         max_cube_V, max_cube_F, max_cube_vol = self.create_cube(V[p,:], Vol_centroid, np.array([0,0,Vol_centroid[2]]))
         max_cube = self.plotter.add_mesh(pv.PolyData(max_cube_V, max_cube_F), show_edges=True, line_width=3, color="g", opacity=0.6)
+        max_cube_stored = max_cube
 
         # find & show max cube face centers
         cell_center = pv.PolyData(max_cube_V, max_cube_F).cell_centers()
@@ -266,54 +269,65 @@ class MainWindow(Qt.QMainWindow):
 
     def cube_center_ray(self, start, dir, value):
         ''' from starting point shoot out n rays to find vertices of possible cubes '''
-        global r_num
+        global r_num, r_rot, r_dec
 
         # initialize variables
-        r_num = int(value[0])
-        r_rot = 2*np.pi/r_num
+        idx = value.index(" ")
+        r_num = 0
+        for i in range(0, idx):
+            r_num = r_num + int(value[i]) + (idx - i)**10
+        r_rot = np.pi/2
+        r_dec = -2*np.pi/r_num
         l_wid = 5
         pt_size = 20
-        ray_size = np.zeros((r_num, 3))
+        ray_size = np.zeros((4, 3))
         r_dir = ray_size
         r_dir_norm = ray_size
         r_end = ray_size
         rays = [0] * r_num
         ints = [0] * r_num
         r_int = []
+        ori_r_int = []
 
         # set ray length
         r_len = np.sqrt((x_range/2)**2 + (y_range/2)**2 + (z_range/2)**2)
         
         # create rays by rotating the first, which creates the cube with xyz axes as its face normals
-        for j in range(0, r_num):
-            if (j == 0) and (dir == 'z'):
-                r_dir[0] = np.array([0.5, 0.5, 0.5])
-                r_dir_norm[0] = r_dir[0] / np.linalg.norm(r_dir[0])
-                r_end[0] = Vol_centroid + r_dir_norm[0] * r_len
-                # set rotation matrix about 'z'
-                R = self.rot_axis(np.array([0,0,1]))
-            elif (j == 0) and (dir == '-z'):
-                r_dir[0] = np.array([0.5, 0.5, -0.5])
-                r_dir_norm[0] = r_dir[0] / np.linalg.norm(r_dir[0])
-                r_end[0] = Vol_centroid + r_dir_norm[0] * r_len
-                # set rotation matrix about '-z'
-                R = self.rot_axis(np.array([0,0,-1]))
-            else:
-                r_end[j] = np.dot(R(j*r_rot), (r_end[0]-Vol_centroid).T).T
-                r_end[j] = r_end[j] + Vol_centroid
+        for i in range(0, r_num):
+            for j in range(0, 4):
+                if (j == 0) and (dir == 'z'):
+                    r_dir[0] = np.array([np.sqrt(2)/2 * np.cos(np.pi/4 + r_dec * i), np.sqrt(2)/2 * np.sin(np.pi/4 + r_dec * i), 0.5])
+                    r_dir_norm[0] = r_dir[0] / np.linalg.norm(r_dir[0])
+                    r_end[0] = Vol_centroid + r_dir_norm[0] * r_len
+                    # set rotation matrix about 'z'
+                    R = self.rot_axis(np.array([0,0,1]))
+                elif (j == 0) and (dir == '-z'):
+                    r_dir[0] = np.array([np.sqrt(2)/2 * np.cos(np.pi/4 + r_dec * i), np.sqrt(2)/2 * np.sin(np.pi/4 + r_dec * i), -0.5])
+                    r_dir_norm[0] = r_dir[0] / np.linalg.norm(r_dir[0])
+                    r_end[0] = Vol_centroid + r_dir_norm[0] * r_len
+                    # set rotation matrix about '-z'
+                    R = self.rot_axis(np.array([0,0,-1]))
+                else:
+                    r_end[j] = np.dot(R(j*r_rot), (r_end[0]-Vol_centroid).T).T
+                    r_end[j] = r_end[j] + Vol_centroid
 
-            # perform ray trace
-            r_pts, r_ind = mesh.ray_trace(Vol_centroid, r_end[j])
+                # perform ray trace
+                r_pts, r_ind = mesh.ray_trace(Vol_centroid, r_end[j])
 
-            # show rays
-            rays[j] = self.plotter.add_mesh(pv.Line(Vol_centroid, r_end[j]), color='w', line_width=l_wid)
-            ints[j] = self.plotter.add_mesh(pv.PolyData(r_pts[0]), color='w', point_size=pt_size)
+                # show rays
+                # rays[j] = self.plotter.add_mesh(pv.Line(Vol_centroid, r_end[j]), color='w', line_width=l_wid)
+                # ints[j] = self.plotter.add_mesh(pv.PolyData(r_pts[0]), color='w', point_size=pt_size)
 
-            # create an array of ray intersections
-            r_int = np.append(r_int, r_pts[0])
-        
-        r_int = np.reshape(r_int, (r_num,3))
-        return r_int, rays, ints
+                # create an array of ray intersections
+                r_int = np.append(r_int, r_pts[0])
+            
+            r_int = np.reshape(r_int, (4,3))
+            ori_nearest, ori_p, ori_V = self.nearest_pt(r_int, Vol_centroid)
+            r_int = []
+            ori_r_int = np.append(ori_r_int, ori_V[ori_p,:])
+
+        ori_r_int = np.reshape(ori_r_int, (r_num,3))
+        return ori_r_int, rays, ints
 
     def nearest_pt(self, vert, starting_pt):
         """ find nearest vertex: for segmented convex manifold, a cube with volume centroid as 
@@ -331,6 +345,23 @@ class MainWindow(Qt.QMainWindow):
         p = p[0].item()
 
         return nearest, p, vert
+
+    def furthest_pt(self, vert, starting_pt):
+        global p, furthest, dist
+        """ find furthest vertex among the list of nearest vertices """
+        # find furthest point from the list of points
+        c = len(vert)
+        dist = np.zeros(c)
+        for i in range(0, c):
+            dist[i] = np.sqrt((vert[i,0] - starting_pt[0])**2 + (vert[i,1] - starting_pt[1])**2
+                            + (vert[i,2] - starting_pt[2])**2)
+
+        # find index of the furthest point
+        furthest = max(dist)
+        p = np.where(dist == furthest)
+        p = p[0][0]
+
+        return furthest, p, vert
 
     def create_cube(self, vertex, starting_pt, axis):
         ''' create cube from the nearest pt & centroid '''
@@ -397,144 +428,199 @@ class MainWindow(Qt.QMainWindow):
 
     def max_cube_slice(self):
         ''' splitting the mesh in 27 regions according to the faces of max_cube '''
-        # top
-        top = mesh.clip_closed_surface('z', origin=face_center[0])
-        top.translate([0, 0, z_range/10])
-        top_front = top.clip_closed_surface('y', origin=face_center[1])
-        top_front.translate([0, y_range/10, 0])
-        top_mid_back = top.clip_closed_surface('-y', origin=face_center[1])
-        top_mid = top_mid_back.clip_closed_surface('y', origin=face_center[3])
-        top_back = top.clip_closed_surface('-y', origin=face_center[3])
-        top_back.translate([0, -y_range/10, 0])
+        global face_center
 
-        # top front
-        top_front_right = top_front.clip_closed_surface('-x', origin=face_center[2])
-        top_front_right.translate([-x_range/10, 0, 0])
-        top_front_mid_left = top_front.clip_closed_surface('x', origin=face_center[2])
-        top_front_mid = top_front_mid_left.clip_closed_surface('-x', origin=face_center[4])
-        top_front_left = top_front.clip_closed_surface('x', origin=face_center[4])
-        top_front_left.translate([x_range/10, 0, 0])
+        # # top
+        # top = mesh.clip_closed_surface('z', origin=face_center[0])
+        # top.translate([0, 0, z_range/10])
+        # top_front = top.clip_closed_surface('y', origin=face_center[1])
+        # top_front.translate([0, y_range/10, 0])
+        # top_mid_back = top.clip_closed_surface('-y', origin=face_center[1])
+        # top_mid = top_mid_back.clip_closed_surface('y', origin=face_center[3])
+        # top_back = top.clip_closed_surface('-y', origin=face_center[3])
+        # top_back.translate([0, -y_range/10, 0])
 
-        # top mid
-        top_mid_right = top_mid.clip_closed_surface('-x', origin=face_center[2])
-        top_mid_right.translate([-x_range/10, 0, 0])
-        top_mid_mid_left = top_mid.clip_closed_surface('x', origin=face_center[2])
-        top_mid_mid = top_mid_mid_left.clip_closed_surface('-x', origin=face_center[4])
-        top_mid_left = top_mid.clip_closed_surface('x', origin=face_center[4])
-        top_mid_left.translate([x_range/10, 0, 0])
+        # # mid
+        # mid_bottom = mesh.clip_closed_surface('-z', origin=face_center[0])
+        # mid = mid_bottom.clip_closed_surface('z', origin=face_center[5])
+        # mid_front = mid.clip_closed_surface('y', origin=face_center[1])
+        # mid_front.translate([0, y_range/10, 0])
+        # mid_mid_back = mid.clip_closed_surface('-y', origin=face_center[1])
+        # mid_mid = mid_mid_back.clip_closed_surface('y', origin=face_center[3])
+        # mid_back = mid.clip_closed_surface('-y', origin=face_center[3])
+        # mid_back.translate([0, -y_range/10, 0])
 
-        # top back
-        top_back_right = top_back.clip_closed_surface('-x', origin=face_center[2])
-        top_back_right.translate([-x_range/10, 0, 0])
-        top_back_mid_left = top_back.clip_closed_surface('x', origin=face_center[2])
-        top_back_mid = top_back_mid_left.clip_closed_surface('-x', origin=face_center[4])
-        top_back_left = top_back.clip_closed_surface('x', origin=face_center[4])
-        top_back_left.translate([x_range/10, 0, 0])
+        # # bottom
+        # bottom = mesh.clip_closed_surface('-z', origin=face_center[5])
+        # bottom.translate([0, 0, -z_range/10])
+        # bottom_front = bottom.clip_closed_surface('y', origin=face_center[1])
+        # bottom_front.translate([0, y_range/10, 0])
+        # bottom_mid_back = bottom.clip_closed_surface('-y', origin=face_center[1])
+        # bottom_mid = bottom_mid_back.clip_closed_surface('y', origin=face_center[3])
+        # bottom_back = bottom.clip_closed_surface('-y', origin=face_center[3])
+        # bottom_back.translate([0, -y_range/10, 0])
+
+        # # top front
+        # top_front_left = top_front.clip_closed_surface('x', origin=face_center[4])
+        # top_front_left.translate([x_range/10, 0, 0])
+        # top_front_mid_right = top_front.clip_closed_surface('-x', origin=face_center[4])
+        # top_front_mid = top_front_mid_right.clip_closed_surface('x', origin=face_center[2])
+        # top_front_right = top_front.clip_closed_surface('-x', origin=face_center[2])
+        # top_front_right.translate([-x_range/10, 0, 0])
+
+        # # top mid
+        # top_mid_left = top_mid.clip_closed_surface('x', origin=face_center[4])
+        # top_mid_left.translate([x_range/10, 0, 0])
+        # top_mid_mid_right = top_mid.clip_closed_surface('-x', origin=face_center[4])
+        # top_mid_mid = top_mid_mid_right.clip_closed_surface('x', origin=face_center[2])
+        # top_mid_right = top_mid.clip_closed_surface('-x', origin=face_center[2])
+        # top_mid_right.translate([-x_range/10, 0, 0])
+
+        # # top back
+        # top_back_left = top_back.clip_closed_surface('x', origin=face_center[4])
+        # top_back_left.translate([x_range/10, 0, 0])
+        # top_back_mid_right = top_back.clip_closed_surface('-x', origin=face_center[4])
+        # top_back_mid = top_back_mid_right.clip_closed_surface('x', origin=face_center[2])
+        # top_back_right = top_back.clip_closed_surface('-x', origin=face_center[2])
+        # top_back_right.translate([-x_range/10, 0, 0])
+
+        # # mid front
+        # mid_front_left = mid_front.clip_closed_surface('x', origin=face_center[4])
+        # mid_front_left.translate([x_range/10, 0, 0])
+        # mid_front_mid_right = mid_front.clip_closed_surface('-x', origin=face_center[4])
+        # mid_front_mid = mid_front_mid_right.clip_closed_surface('x', origin=face_center[2])
+        # mid_front_right = mid_front.clip_closed_surface('-x', origin=face_center[2])
+        # mid_front_right.translate([-x_range/10, 0, 0])
+
+        # # mid mid
+        # mid_mid_left = mid_mid.clip_closed_surface('x', origin=face_center[4])
+        # mid_mid_left.translate([x_range/10, 0, 0])
+        # mid_mid_mid_right = mid_mid.clip_closed_surface('-x', origin=face_center[4])
+        # mid_mid_mid = mid_mid_mid_right.clip_closed_surface('x', origin=face_center[2])
+        # mid_mid_right = mid_mid.clip_closed_surface('-x', origin=face_center[2])
+        # mid_mid_right.translate([-x_range/10, 0, 0])
+
+        # # mid back
+        # mid_back_left = mid_back.clip_closed_surface('x', origin=face_center[4])
+        # mid_back_left.translate([x_range/10, 0, 0])
+        # mid_back_mid_right = mid_back.clip_closed_surface('-x', origin=face_center[4])
+        # mid_back_mid = mid_back_mid_right.clip_closed_surface('x', origin=face_center[2])
+        # mid_back_right = mid_back.clip_closed_surface('-x', origin=face_center[2])
+        # mid_back_right.translate([-x_range/10, 0, 0])
+
+        # # bottom front
+        # bottom_front_left = bottom_front.clip_closed_surface('x', origin=face_center[4])
+        # bottom_front_left.translate([x_range/10, 0, 0])
+        # bottom_front_mid_right = bottom_front.clip_closed_surface('-x', origin=face_center[4])
+        # bottom_front_mid = bottom_front_mid_right.clip_closed_surface('x', origin=face_center[2])
+        # bottom_front_right = bottom_front.clip_closed_surface('-x', origin=face_center[2])
+        # bottom_front_right.translate([-x_range/10, 0, 0])
+
+        # # bottom mid
+        # bottom_mid_left = bottom_mid.clip_closed_surface('x', origin=face_center[4])
+        # bottom_mid_left.translate([x_range/10, 0, 0])
+        # bottom_mid_mid_right = bottom_mid.clip_closed_surface('-x', origin=face_center[4])
+        # bottom_mid_mid = bottom_mid_mid_right.clip_closed_surface('x', origin=face_center[2])
+        # bottom_mid_right = bottom_mid.clip_closed_surface('-x', origin=face_center[2])
+        # bottom_mid_right.translate([-x_range/10, 0, 0])
+
+        # # bottom back
+        # bottom_back_left = bottom_back.clip_closed_surface('x', origin=face_center[4])
+        # bottom_back_left.translate([x_range/10, 0, 0])
+        # bottom_back_mid_right = bottom_back.clip_closed_surface('-x', origin=face_center[4])
+        # bottom_back_mid = bottom_back_mid_right.clip_closed_surface('x', origin=face_center[2])
+        # bottom_back_right = bottom_back.clip_closed_surface('-x', origin=face_center[2])
+        # bottom_back_right.translate([-x_range/10, 0, 0])
+
+        # display top sections
+        # self.plotter.add_mesh(top_front_right, show_edges=True, color="r", opacity=0.4)
+        # self.plotter.add_mesh(top_front_mid, show_edges=True, color="w", opacity=0.4)
+        # self.plotter.add_mesh(top_front_left, show_edges=True, color="g", opacity=0.4)
+        # self.plotter.add_mesh(top_mid_right, show_edges=True, color="y", opacity=0.4)
+        # self.plotter.add_mesh(top_mid_mid, show_edges=True, color="r", opacity=0.4)
+        # self.plotter.add_mesh(top_mid_left, show_edges=True, color="w", opacity=0.4)
+        # self.plotter.add_mesh(top_back_right, show_edges=True, color="g", opacity=0.4)
+        # self.plotter.add_mesh(top_back_mid, show_edges=True, color="y", opacity=0.4)
+        # self.plotter.add_mesh(top_back_left, show_edges=True, color="r", opacity=0.4)
         
-        # mid
+        # # display mid sections
+        # self.plotter.add_mesh(mid_front_right, show_edges=True, color="w", opacity=0.4)
+        # self.plotter.add_mesh(mid_front_mid, show_edges=True, color="g", opacity=0.4)
+        # self.plotter.add_mesh(mid_front_left, show_edges=True, color="y", opacity=0.4)
+        # self.plotter.add_mesh(mid_mid_right, show_edges=True, color="r", opacity=0.4)
+        # self.plotter.add_mesh(mid_mid_mid, show_edges=True, color="w", opacity=0.4)
+        # self.plotter.add_mesh(mid_mid_left, show_edges=True, color="g", opacity=0.4)
+        # self.plotter.add_mesh(mid_back_right, show_edges=True, color="y", opacity=0.4)
+        # self.plotter.add_mesh(mid_back_mid, show_edges=True, color="r", opacity=0.4)
+        # self.plotter.add_mesh(mid_back_left, show_edges=True, color="w", opacity=0.4)
+
+        # # display bottom sections
+        # self.plotter.add_mesh(bottom_front_right, show_edges=True, color="g", opacity=0.4)
+        # self.plotter.add_mesh(bottom_front_mid, show_edges=True, color="y", opacity=0.4)
+        # self.plotter.add_mesh(bottom_front_left, show_edges=True, color="r", opacity=0.4)
+        # self.plotter.add_mesh(bottom_mid_right, show_edges=True, color="w", opacity=0.4)
+        # self.plotter.add_mesh(bottom_mid_mid, show_edges=True, color="g", opacity=0.4)
+        # self.plotter.add_mesh(bottom_mid_left, show_edges=True, color="y", opacity=0.4)
+        # self.plotter.add_mesh(bottom_back_right, show_edges=True, color="r", opacity=0.4)
+        # self.plotter.add_mesh(bottom_back_mid, show_edges=True, color="w", opacity=0.4)
+        # self.plotter.add_mesh(bottom_back_left, show_edges=True, color="g", opacity=0.4)
+
+        # creating a 3x3x3 matrix representing the 27 regions
+        dim = 3
+        height = [[]*dim]
+        side = [[[]*dim]*dim]
+        cube = [[[[]*dim]*dim]*dim]
+
+        # spliting the mesh along the z-axis
+        height[0] = mesh.clip_closed_surface('z', origin=face_center[0])
+        height[0].translate([0, 0, z_range/10])
         mid_bottom = mesh.clip_closed_surface('-z', origin=face_center[0])
-        mid = mid_bottom.clip_closed_surface('z', origin=face_center[5])
-        mid_front = mid.clip_closed_surface('y', origin=face_center[1])
-        mid_front.translate([0, y_range/10, 0])
-        mid_mid_back = mid.clip_closed_surface('-y', origin=face_center[1])
-        mid_mid = mid_mid_back.clip_closed_surface('y', origin=face_center[3])
-        mid_back = mid.clip_closed_surface('-y', origin=face_center[3])
-        mid_back.translate([0, -y_range/10, 0])
+        height[1] = mid_bottom.clip_closed_surface('z', origin=face_center[5])
+        height[2] = mesh.clip_closed_surface('-z', origin=face_center[5])
+        height[2].translate([0, 0, -z_range/10])
 
-        # mid front
-        mid_front_right = mid_front.clip_closed_surface('-x', origin=face_center[2])
-        mid_front_right.translate([-x_range/10, 0, 0])
-        mid_front_mid_left = mid_front.clip_closed_surface('x', origin=face_center[2])
-        mid_front_mid = mid_front_mid_left.clip_closed_surface('-x', origin=face_center[4])
-        mid_front_left = mid_front.clip_closed_surface('x', origin=face_center[4])
-        mid_front_left.translate([x_range/10, 0, 0])
-
-        # mid mid
-        mid_mid_right = mid_mid.clip_closed_surface('-x', origin=face_center[2])
-        mid_mid_right.translate([-x_range/10, 0, 0])
-        mid_mid_mid_left = mid_mid.clip_closed_surface('x', origin=face_center[2])
-        mid_mid_mid = mid_mid_mid_left.clip_closed_surface('-x', origin=face_center[4])
-        mid_mid_left = mid_mid.clip_closed_surface('x', origin=face_center[4])
-        mid_mid_left.translate([x_range/10, 0, 0])
-
-        # mid back
-        mid_back_right = mid_back.clip_closed_surface('-x', origin=face_center[2])
-        mid_back_right.translate([-x_range/10, 0, 0])
-        mid_back_mid_left = mid_back.clip_closed_surface('x', origin=face_center[2])
-        mid_back_mid = mid_back_mid_left.clip_closed_surface('-x', origin=face_center[4])
-        mid_back_left = mid_back.clip_closed_surface('x', origin=face_center[4])
-        mid_back_left.translate([x_range/10, 0, 0])
-
-        # bottom
-        bottom = mesh.clip_closed_surface('-z', origin=face_center[5])
-        bottom.translate([0, 0, -z_range/10])
-        bottom_front = bottom.clip_closed_surface('y', origin=face_center[1])
-        bottom_front.translate([0, y_range/10, 0])
-        bottom_mid_back = bottom.clip_closed_surface('-y', origin=face_center[1])
-        bottom_mid = bottom_mid_back.clip_closed_surface('y', origin=face_center[3])
-        bottom_back = bottom.clip_closed_surface('-y', origin=face_center[3])
-        bottom_back.translate([0, -y_range/10, 0])
-
-        # bottom front
-        bottom_front_right = bottom_front.clip_closed_surface('-x', origin=face_center[2])
-        bottom_front_right.translate([-x_range/10, 0, 0])
-        bottom_front_mid_left = bottom_front.clip_closed_surface('x', origin=face_center[2])
-        bottom_front_mid = bottom_front_mid_left.clip_closed_surface('-x', origin=face_center[4])
-        bottom_front_left = bottom_front.clip_closed_surface('x', origin=face_center[4])
-        bottom_front_left.translate([x_range/10, 0, 0])
-
-        # bottom mid
-        bottom_mid_right = bottom_mid.clip_closed_surface('-x', origin=face_center[2])
-        bottom_mid_right.translate([-x_range/10, 0, 0])
-        bottom_mid_mid_left = bottom_mid.clip_closed_surface('x', origin=face_center[2])
-        bottom_mid_mid = bottom_mid_mid_left.clip_closed_surface('-x', origin=face_center[4])
-        bottom_mid_left = bottom_mid.clip_closed_surface('x', origin=face_center[4])
-        bottom_mid_left.translate([x_range/10, 0, 0])
-
-        # bottom back
-        bottom_back_right = bottom_back.clip_closed_surface('-x', origin=face_center[2])
-        bottom_back_right.translate([-x_range/10, 0, 0])
-        bottom_back_mid_left = bottom_back.clip_closed_surface('x', origin=face_center[2])
-        bottom_back_mid = bottom_back_mid_left.clip_closed_surface('-x', origin=face_center[4])
-        bottom_back_left = bottom_back.clip_closed_surface('x', origin=face_center[4])
-        bottom_back_left.translate([x_range/10, 0, 0])
+        # spliting the mesh along the y-axis
+        for k in range(0, 3):
+            try:
+                side[0, k] = height[k].clip_closed_surface('y', origin=face_center[1])
+                side[0, k].translate([0, y_range/10, 0])
+                mid_back = height[k].clip_closed_surface('-y', origin=face_center[1])
+                side[1, k] = mid_back.clip_closed_surface('y', origin=face_center[3])
+                side[2, k] = height[k].clip_closed_surface('-y', origin=face_center[3])
+                side[2, k].translate([0, -y_range/10, 0])
+            except ValueError:
+                pass
+        
+        # splitting the mesh along the x-axis
+        for j in range(0, 3):
+            for k in range(0, 3):
+                try:
+                    cube[0,j,k] = side[j,k].clip_closed_surface('x', origin=face_center[4])
+                    cube[0,j,k].translate([x_range/10, 0, 0])
+                    mid_right = side[j,k].clip_closed_surface('-x', origin=face_center[4])
+                    cube[2,j,k] = mid_right.clip_closed_surface('x', origin=face_center[2])
+                    cube[3,j,k] = side[j,k].clip_closed_surface('-x', origin=face_center[2])
+                    cube[3,j,k].translate([-x_range/10, 0, 0])
+                except ValueError:
+                    pass
 
         # clear plotter
         self.plotter.clear()
 
-        # display top sections
-        self.plotter.add_mesh(top_front_right, show_edges=True, color="r", opacity=0.4)
-        self.plotter.add_mesh(top_front_mid, show_edges=True, color="w", opacity=0.4)
-        self.plotter.add_mesh(top_front_left, show_edges=True, color="g", opacity=0.4)
-        self.plotter.add_mesh(top_mid_right, show_edges=True, color="y", opacity=0.4)
-        self.plotter.add_mesh(top_mid_mid, show_edges=True, color="r", opacity=0.4)
-        self.plotter.add_mesh(top_mid_left, show_edges=True, color="w", opacity=0.4)
-        self.plotter.add_mesh(top_back_right, show_edges=True, color="g", opacity=0.4)
-        self.plotter.add_mesh(top_back_mid, show_edges=True, color="y", opacity=0.4)
-        self.plotter.add_mesh(top_back_left, show_edges=True, color="r", opacity=0.4)
-        
-        # display mid sections
-        self.plotter.add_mesh(mid_front_right, show_edges=True, color="w", opacity=0.4)
-        self.plotter.add_mesh(mid_front_mid, show_edges=True, color="g", opacity=0.4)
-        self.plotter.add_mesh(mid_front_left, show_edges=True, color="y", opacity=0.4)
-        self.plotter.add_mesh(mid_mid_right, show_edges=True, color="r", opacity=0.4)
-        self.plotter.add_mesh(mid_mid_mid, show_edges=True, color="w", opacity=0.4)
-        self.plotter.add_mesh(mid_mid_left, show_edges=True, color="g", opacity=0.4)
-        self.plotter.add_mesh(mid_back_right, show_edges=True, color="y", opacity=0.4)
-        self.plotter.add_mesh(mid_back_mid, show_edges=True, color="r", opacity=0.4)
-        self.plotter.add_mesh(mid_back_left, show_edges=True, color="w", opacity=0.4)
+        # section color choices
+        color = ["r", "w", "g", "y"]
+        ind = 1
 
-        # display bottom sections
-        self.plotter.add_mesh(bottom_front_right, show_edges=True, color="g", opacity=0.4)
-        self.plotter.add_mesh(bottom_front_mid, show_edges=True, color="y", opacity=0.4)
-        self.plotter.add_mesh(bottom_front_left, show_edges=True, color="r", opacity=0.4)
-        self.plotter.add_mesh(bottom_mid_right, show_edges=True, color="w", opacity=0.4)
-        self.plotter.add_mesh(bottom_mid_mid, show_edges=True, color="g", opacity=0.4)
-        self.plotter.add_mesh(bottom_mid_left, show_edges=True, color="y", opacity=0.4)
-        self.plotter.add_mesh(bottom_back_right, show_edges=True, color="r", opacity=0.4)
-        self.plotter.add_mesh(bottom_back_mid, show_edges=True, color="w", opacity=0.4)
-        self.plotter.add_mesh(bottom_back_left, show_edges=True, color="g", opacity=0.4)
-    
+        # display sections
+        for i in range(0, 3):
+            for j in range(0, 3):
+                for k in range(0, 3):
+                    if ind == 4:
+                        ind = 1
+                    else:
+                        ind += 1
+                    self.plotter.add_mesh(cube[i,j,k], show_edges=True, color=color[ind], opacity=0.4)
+
     def next_cubes_ray(self, value):
         ''' create cubes within the mesh from the face centers of the first cube'''
         global next_cube_vol, max_normal
@@ -543,34 +629,30 @@ class MainWindow(Qt.QMainWindow):
         # find max cube
         self.max_cube_ray(value)
 
-        # bypass error
-        try:
-            next_rays, next_ints, next_cubes, r_num
-        except NameError:
-            next_rays = None
-            next_ints = None
-            next_cubes = None
-            r_num = 0
+        # # bypass error
+        # try:
+        #     next_rays, next_ints, next_cubes, r_num
+        # except NameError:
+        #     next_rays = None
+        #     next_ints = None
+        #     next_cubes = None
+        #     r_num = 0
 
-        print(next_cubes)
-        print(next_ints)
-        # remove old rays
-        if (r_num != 0) and (r_num == int(value[0])):
-            return
-        elif (r_num != 0) and (next_cubes != None):
-            for i in range(0,6):
-                self.plotter.remove_actor(next_cubes[i])
-                for j in range(0, r_num):
-                    self.plotter.remove_actor(next_rays[i*r_num+j])
-                    self.plotter.remove_actor(next_ints[i*r_num+j])
+        # # remove old rays
+        # if (r_num != 0) and (r_num == int(value[0])):
+        #     return
+        # elif (r_num != 0) and (next_cubes != None):
+        #     for i in range(0,6):
+        #         self.plotter.remove_actor(next_cubes[i])
+        #         for j in range(0, r_num):
+        #             self.plotter.remove_actor(next_rays[i*r_num+j])
+        #             self.plotter.remove_actor(next_ints[i*r_num+j])
 
         # track starting time
         next_cube_start = time.time()
 
         # initiate variables
         next_cube_vol_sum = 0
-        r_num = int(value[0])
-        r_rot = 2*np.pi/r_num
         next_cubes = [0] * 6
         next_rays = [0] * 6 * r_num
         next_ints = [0] * 6 * r_num
@@ -580,13 +662,15 @@ class MainWindow(Qt.QMainWindow):
         if (np.sign(normal[2]) != np.sign(max_normal[0,2])):
             max_normal =  np.negative(max_normal)
 
+        print(max_normal)
+        print(face_center)
         # loop through all 6 faces of max cube
         for i in range(0, 6):
             # create rotaional matrix about max cube normals
             R = self.rot_axis(max_normal[i])
 
             # initialize variables
-            ray_size = np.zeros((r_num, 3))
+            ray_size = np.zeros((4, 3))
             r_dir = ray_size
             r_dir_norm = ray_size
             r_end = ray_size
@@ -595,40 +679,48 @@ class MainWindow(Qt.QMainWindow):
             l_wid = 3
             pt_size = 10
             r_len = np.sqrt((x_range/2)**2 + (y_range/2)**2 + (z_range/2)**2)
-            r_int = np.array([])
+            r_int = []
+            ori_r_int = []
             
             for j in range(0, r_num):
-                if j == 0:
-                    if (i == 0) or (i == 5):
-                        r_dir[0] = np.array(max_normal[i] + ([1,1,1] - abs(max_normal[i])) / 2)
+                for k in range(0, 4):
+                    if k == 0:
+                        if (i == 0) or (i == 5):
+                            r_dir[0] = np.array([np.sqrt(2)/2 * np.cos(np.pi/4 + r_dec * j), np.sqrt(2)/2 * np.sin(np.pi/4 + r_dec * j), max_normal[i][2]])
+                        else:
+                            x,y = sp.symbols('x,y')
+                            f = sp.Eq(max_normal[i][0]*x + max_normal[i][1]*y, 0)
+                            g = sp.Eq(x**2 + y**2, 0.5**2)
+                            inc = sp.solve([f,g],(x,y))
+                            r_dir[0] = np.array(max_normal[i] + [inc[0][0], inc[0][1], 0.5])
+                        r_dir_norm[0] = r_dir[0] / np.linalg.norm(r_dir[0])
+                        r_end[0] = face_center[i] + r_dir_norm[0] * r_len
+                        r_end[0] = np.dot(R(j*r_dec), (r_end[0]-Vol_centroid).T).T
                     else:
-                        x,y = sp.symbols('x,y')
-                        f = sp.Eq(max_normal[i][0]*x + max_normal[i][1]*y, 0)
-                        g = sp.Eq(x**2 + y**2, 0.5**2)
-                        inc = sp.solve([f,g],(x,y))
-                        r_dir[0] = np.array(max_normal[i] + [inc[0][0], inc[0][1], 0.5])
-                    r_dir_norm[0] = r_dir[0] / np.linalg.norm(r_dir[0])
-                    r_end[0] = face_center[i] + r_dir_norm[0] * r_len
-                else:
-                    r_end[j] = np.dot(R(j*r_rot), (r_end[0]-Vol_centroid).T).T
-                    r_end[j] = r_end[j] + Vol_centroid
+                        r_end[k] = np.dot(R(k*r_rot), (r_end[0]-Vol_centroid).T).T
+                        r_end[k] = r_end[k] + Vol_centroid
 
-                # perform ray trace
-                r_pts, r_ind = mesh.ray_trace(face_center[i], r_end[j])
+                    # perform ray trace
+                    r_pts, r_ind = mesh.ray_trace(face_center[i], r_end[k])
 
-                # show rays
-                next_rays[i*r_num+j] = self.plotter.add_mesh(pv.Line(face_center[i], r_end[j]), color='w', line_width=l_wid)
-                next_ints[i*r_num+j] = self.plotter.add_mesh(pv.PolyData(r_pts[0]), color='w', point_size=pt_size)
+                    # show rays
+                    # next_rays[i*r_num+k] = self.plotter.add_mesh(pv.Line(face_center[i], r_end[k]), color='w', line_width=l_wid)
+                    # next_ints[i*r_num+k] = self.plotter.add_mesh(pv.PolyData(r_pts[0]), color='w', point_size=pt_size)
 
-                # create an array of ray intersections
-                r_int = np.append(r_int, r_pts[0])
+                    # create an array of ray intersections
+                    r_int = np.append(r_int, r_pts[0])
 
-            # find nearest vertice among the ray intersections
-            r_int = np.reshape(r_int, (r_num,3))
-            r = self.nearest_pt(r_int, face_center[i])
+                # find nearest vertice among the ray intersections
+                r_int = np.reshape(r_int, (4,3))
+                ori_nearest, ori_p, ori_V = self.nearest_pt(r_int, face_center[i])
+                r_int = []
+                ori_r_int = np.append(ori_r_int, ori_V[ori_p,:])
+
+            ori_r_int = np.reshape(ori_r_int, (r_num,3))
+            face = self.furthest_pt(ori_r_int, face_center[i])
 
             # create cube from nearest vertice
-            next_cube_V, next_cube_F, next_cube_vol = self.create_cube(r[2][r[1],:], face_center[i], max_normal[i])
+            next_cube_V, next_cube_F, next_cube_vol = self.create_cube(face[2][face[1],:], face_center[i], max_normal[i])
             next_cubes[i] = self.plotter.add_mesh(pv.PolyData(next_cube_V, next_cube_F), show_edges=True, line_width=3, color="g", opacity=0.6)
 
             # next cube volume
