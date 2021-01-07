@@ -579,17 +579,49 @@ class MainWindow(Qt.QMainWindow):
         side = np.zeros((3,3), dtype=object)
         cube = np.zeros((3,3,3), dtype=object)
 
+        # find face center x- and y-directions
+        if abs(np.around(face_center[1][0],decimals=5)) != 0:
+            if face_center[1][0] > face_center[3][0]:
+                x_max = face_center[1]
+                x_min = face_center[3]
+            else:
+                x_max = face_center[3]
+                x_min = face_center[1]
+            if face_center[2][1] > face_center[4][1]:
+                y_max = face_center[2]
+                y_min = face_center[4]
+            else:
+                y_max = face_center[4]
+                y_min = face_center[2]
+        elif abs(np.around(face_center[2][0],decimals=5)) != 0:
+            if face_center[2][0] > face_center[4][0]:
+                x_max = face_center[2]
+                x_min = face_center[4]
+            else:
+                x_max = face_center[4]
+                x_min = face_center[2]
+            if face_center[1][1] > face_center[3][1]:
+                y_max = face_center[1]
+                y_min = face_center[3]
+            else:
+                y_max = face_center[3]
+                y_min = face_center[1]
+        
+        # set face center z-directions
+        z_max = face_center[0]
+        z_min = face_center[5]
+
         # spliting the mesh along the z-axis
-        height[0] = mesh.clip_closed_surface('z', origin=face_center[0])
-        height[1] = mesh.clip_closed_surface('-z', origin=face_center[0]).clip_closed_surface('z', origin=face_center[5])
-        height[2] = mesh.clip_closed_surface('-z', origin=face_center[5])
+        height[0] = mesh.clip_closed_surface('z', origin=z_max)
+        height[1] = mesh.clip_closed_surface('-z', origin=z_max).clip_closed_surface('z', origin=z_min)
+        height[2] = mesh.clip_closed_surface('-z', origin=z_min)
 
         # spliting the mesh along the y-axis
         for k in range(0,3):
             try:
-                side[0,k] = height[k].clip_closed_surface('y', origin=face_center[4])
-                side[1,k] = height[k].clip_closed_surface('-y', origin=face_center[4]).clip_closed_surface('y', origin=face_center[2])
-                side[2,k] = height[k].clip_closed_surface('-y', origin=face_center[2])
+                side[0,k] = height[k].clip_closed_surface('y', origin=y_max)
+                side[1,k] = height[k].clip_closed_surface('-y', origin=y_max).clip_closed_surface('y', origin=y_min)
+                side[2,k] = height[k].clip_closed_surface('-y', origin=y_min)
             except ValueError:
                 pass
 
@@ -597,14 +629,19 @@ class MainWindow(Qt.QMainWindow):
         for j in range(0,3):
             for k in range(0,3):
                 try:
-                    cube[0,j,k] = side[j,k].clip_closed_surface('x', origin=face_center[3])
-                    cube[1,j,k] = side[j,k].clip_closed_surface('x', origin=face_center[1]).clip_closed_surface('-x', origin=face_center[3])
-                    cube[2,j,k] = side[j,k].clip_closed_surface('-x', origin=face_center[1])
+                    cube[0,j,k] = side[j,k].clip_closed_surface('x', origin=x_max)
+                    cube[1,j,k] = side[j,k].clip_closed_surface('x', origin=x_min).clip_closed_surface('-x', origin=x_max)
+                    cube[2,j,k] = side[j,k].clip_closed_surface('-x', origin=x_min)
                 except ValueError:
                     pass
 
         # clear plotter
         # self.plotter.clear()
+
+        self.plotter.add_mesh(pv.PolyData(face_center[1]), color='c', point_size=20.0, render_points_as_spheres=True)
+        self.plotter.add_mesh(pv.PolyData(face_center[3]), color='c', point_size=20.0, render_points_as_spheres=True)
+        self.plotter.add_mesh(pv.PolyData(face_center[2]), color='w', point_size=20.0)
+        self.plotter.add_mesh(pv.PolyData(face_center[4]), color='w', point_size=20.0)
 
         # section color choices
         color = ["r", "b", "g", "y"]
