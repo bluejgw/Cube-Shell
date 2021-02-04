@@ -162,7 +162,8 @@ class MainWindow(Qt.QMainWindow):
         # user input number of rays for next cubes
         self.plotter.add_text_slider_widget(self.max_cube_ray, ['1 rays','15 rays', '20 rays'], value=0)
         # self.plotter.add_text_slider_widget(self.next_cubes_ray, ['10 rays','15 rays', '20 rays'], value=0)
-        self.max_cube_slice()
+        regions = self.max_cube_slice()
+        self.combine_corner_partitions(regions)
         
     def max_cube_ray(self, value):
         """ add a maximally inscribed cube within the opened mesh (via ray tracing) """
@@ -424,7 +425,8 @@ class MainWindow(Qt.QMainWindow):
         return a, b, c
 
     def max_cube_slice(self):
-        ''' splitting the mesh in 27 regions according to the faces of max_cube '''
+        ''' splitting the mesh in 27 regions according to the faces of max_cube
+        and appending small, isolated partitions to the 27 main partitions '''
         global face_center
         # creating a 3x3x3 matrix representing the 27 regions
         height = np.zeros(3, dtype=object)
@@ -498,8 +500,6 @@ class MainWindow(Qt.QMainWindow):
 
         # start output text file
         report = open("report.txt","w")
-        print("Preprocessing...", end = "\n", file = report)
-        print("\n", file = report)
         print("Disconnected partitions:", end = "\n", file = report)
 
         # separate disconnected regions (extra[i,j,k])
@@ -871,8 +871,85 @@ class MainWindow(Qt.QMainWindow):
                                     if break_outter == True:
                                         break
         
+        # close report
+        report.close()
+
+        # # section color choices
+        # color = ["r", "b", "g", "y", "cyan"]
+        # ind = -1
+
+        # # display sections
+        # for i in range(0,3):
+        #     for j in range(0,3):
+        #         for k in range(0,3):
+        #             # rotate the 5 indicating colors
+        #             if ind == 4:
+        #                 ind = 0
+        #             else:
+        #                 ind += 1
+        #             if cube[i,j,k]!= 0:
+        #             # if extra[i,j,k].n_blocks!= 0:
+        #                 self.plotter.add_mesh(cube[i,j,k], show_edges=True, color=color[ind], opacity=0.4)
+        #                 # self.plotter.add_mesh(extra[i,j,k], show_edges=True, color=color[ind], opacity=0.4)
+        #                 # filename = "section [" + str(i) + "," + str(j) + "," + str(k) +"].STL"
+        #                 # cube[i,j,k].save("output/"+ filename)
+    
+        return cube
+
+    def combine_corner_partitions(self, cube):
+        ''' combine pairs of partitions at the corners to reduce total number of partitions '''
+        # print to report
+        report = open("report.txt", "a")
+        print("\n", file = report)
+        print("Proceed to combine corner partitions...", end = "\n", file = report)
+
+        # indicate corner partition locations
+        corner_ind = [0, 2]
+        for o in corner_ind:
+            for p in corner_ind:
+                for q in corner_ind:
+                    if (cube[1,p,q] != 0) and (cube[o,p,q][0].merge(cube[1,p,q][0]).split_bodies().n_blocks == 1):
+                        o_pair = cube[o,p,q][0].merge(cube[1,p,q][0])
+                        o_pair_vol = o_pair.volume
+                        o_append = [1,p,q]
+                    else:
+                        o_pair = 0
+                        o_pair_vol = 0
+                        o_append = 0
+                    if (cube[o,1,q] != 0) and (cube[o,p,q][0].merge(cube[o,1,q][0]).split_bodies().n_blocks == 1):
+                        p_pair = cube[o,p,q][0].merge(cube[o,1,q][0])
+                        p_pair_vol = p_pair.volume
+                        p_append = [o,1,q]
+                    else:
+                        p_pair = 0
+                        p_pair_vol = 0
+                        p_append = 0
+                    if (cube[o,p,1] != 0) and (cube[o,p,q][0].merge(cube[o,p,1][0]).split_bodies().n_blocks == 1):
+                        q_pair = cube[o,p,q][0].merge(cube[o,p,1][0])
+                        q_pair_vol = q_pair.volume
+                        q_append = [o,p,1]
+                    else:
+                        q_pair = 0
+                        q_pair_vol = 0
+                        q_append = 0
+                    pair_option = [o_pair, p_pair, q_pair]
+                    append_option = [o_append, p_append, q_append]
+                    pair_vol = np.array([o_pair_vol, p_pair_vol, q_pair_vol])
+                    max_pair_vol = max(pair_vol)
+                    if max_pair_vol != 0:
+                        n = np.where(pair_vol == max_pair_vol)
+                        n = n[0][0]
+                        if n == 0:
+                            print("cube[", o, p, q, "][ 0 ] <-- cube[", 1, p, q, "][ 0 ]", end = "\n", file = report)
+                        elif n == 1:
+                            print("cube[", o, p, q, "][ 0 ] <-- cube[", o, 1, q, "][ 0 ]", end = "\n", file = report)
+                        elif n == 2:
+                            print("cube[", o, p, q, "][ 0 ] <-- cube[", o, p, 1, "][ 0 ]", end = "\n", file = report)
+                        cube[o,p,q] = pv.MultiBlock([pair_option[n]])
+                        cube[append_option[n][0], append_option[n][1], append_option[n][2]] = 0
+                    
         # section color choices
-        color = ["r", "b", "g", "y", "tan"]
+        color = ["r", "b", "g", "y", "cyan"]
         ind = -1
 
         # display sections
@@ -884,12 +961,11 @@ class MainWindow(Qt.QMainWindow):
                         ind = 0
                     else:
                         ind += 1
-                    if cube[i,j,k]!= 0:
-                    # if extra[i,j,k].n_blocks!= 0:
-                        self.plotter.add_mesh(cube[i,j,k], show_edges=True, color=color[ind], opacity=0.4)
-                        # self.plotter.add_mesh(extra[i,j,k], show_edges=True, color=color[ind], opacity=0.4)
-                        # filename = "section [" + str(i) + "," + str(j) + "," + str(k) +"].STL"
-                        # cube[i,j,k].save("output/"+ filename)
+                    if cube[i,j,k] != 0:
+                        self.plotter.add_mesh(cube[i,j,k], show_edges=True, color=color[ind], opacity=0.8)
+                        file_name = "section [" + str(i) + "," + str(j) + "," + str(k) +"].STL"
+                        pv.save_meshio("output/"+ file_name, cube[i,j,k][0])
+        
 
     def next_cubes_ray(self, value):
         ''' create cubes within the mesh from the face centers of the first cube'''
