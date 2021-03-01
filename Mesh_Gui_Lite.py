@@ -179,7 +179,7 @@ class MainWindow(Qt.QMainWindow):
 
         # user input number of rays for next cubes
         # self.plotter.add_text_slider_widget(self.max_cube_ray, ['10 rays','15 rays', '20 rays'], value=0)
-        self.plotter.add_text_slider_widget(self.next_cubes_ray, ['10 rays','15 rays', '20 rays'], value=0)
+        self.plotter.add_text_slider_widget(self.next_cubes_ray, ['10 rays','15 rays', '20 rays'], value=1)
         
     def max_cube_ray(self, value):
         """ add a maximally inscribed cube within the opened mesh (via ray tracing) """
@@ -367,7 +367,7 @@ class MainWindow(Qt.QMainWindow):
         if (axis[0] == 0) and (axis[1] == 0) and (axis[2] == 0):
             axis[2] = 1
             vert_trans = np.array([0,0,0])
-        elif (Vol_centroid[0] == 0) and (Vol_centroid[1] == 0) and (Vol_centroid[2] == 0):
+        elif (starting_pt[0] == 0) and (starting_pt[1] == 0) and (starting_pt[2] == 0):
             vert_trans = np.array([0,0,0])
         else:
             vert_trans = starting_pt
