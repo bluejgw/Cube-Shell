@@ -46,6 +46,11 @@ class MainWindow(Qt.QMainWindow):
         self.cubic_skeleton_action = Qt.QAction('Cubic Skeleton', self)
         self.cubic_skeleton_action.triggered.connect(self.cubic_skeleton)
         editMenu.addAction(self.cubic_skeleton_action)
+
+        # inserting maximally inscribed cube via ray tracing
+        self.cuboid_skeleton_action = Qt.QAction('Cubic Skeleton - Extended Max Cube', self)
+        self.cuboid_skeleton_action.triggered.connect(self.cuboid_skeleton)
+        editMenu.addAction(self.cuboid_skeleton_action)
         
         if show:
             self.show()
@@ -61,17 +66,8 @@ class MainWindow(Qt.QMainWindow):
         file_path = file_info[0]
         
         # determine file type and if conversion needed
-        file_dir, file_name = os.path.split(file_path)
+        _, file_name = os.path.split(file_path)
         mesh_name, mesh_type = os.path.splitext(file_name)
-
-        # convert mesh file type
-        #if ext != ".vtk" or ext != ".VTK":
-        #    mesh = meshio.read(file_path)
-        #    meshio.write(root + ".vtk", mesh)
-        #    mesh = pv.read(head + "/" + root + ".vtk")
-            # need to store elsewhere or delete .vtk file in the future
-        #else:
-        #    mesh = pv.read(file_path)
 
         # read mesh & transform according to principal axes
         pre = trimesh.load(file_path)
@@ -79,6 +75,7 @@ class MainWindow(Qt.QMainWindow):
         pre = pre.apply_transform(orient)
         pre.export('data/'+ mesh_name + '_oriented.STL')
         mesh = pv.read('data/'+ mesh_name + '_oriented.STL')
+        mesh.points *= 30
 
         # print mesh info
         print("Mesh Name:", mesh_name)
@@ -106,6 +103,9 @@ class MainWindow(Qt.QMainWindow):
         self.plotter.add_axes_at_origin(xlabel='X', ylabel='Y', zlabel='Z', line_width=6, labels_off=True)
 
         self.plotter.show_bounds()
+
+        Vol_centroid = np.array([0,0,0])
+        self.plotter.add_mesh(pv.PolyData(Vol_centroid), color='r', point_size=20.0, render_points_as_spheres=True)
         
     def centroid(self):
         """ find centroid volumetrically and indicate on graph """
@@ -161,20 +161,44 @@ class MainWindow(Qt.QMainWindow):
     
     def cubic_skeleton(self):
         ''' fill mesh with cubic skeleton'''
-        self.max_cube_ray()
-        cube, ranked_cube = self.max_cube_slice()
-        # self.combine_corner_partitions(cube)
-        self.combine_pair_partitions(cube, ranked_cube)
-        
-    def max_cube_ray(self):
-        """ add a maximally inscribed cube within the opened mesh (via ray tracing) """
-        global x_range, y_range, z_range, Vol_centroid
-        global face_center, max_normal, max_cube_vol, max_cube
-        global max_cube_start, max_cube_end, max_cube_run
-        global top_rays, top_ints, bottom_rays, bottom_ints
-
         # track starting time
-        max_cube_start = time.time()
+        cubic_skeleton_start = time.time()
+
+        self.max_cube_ray()
+        cube, ranked_cube, size_error = self.max_cube_slice()
+        if (size_error == False):
+            self.combine_pair_partitions(cube, ranked_cube)
+
+        # track ending time & duration
+        cubic_skeleton_end = time.time()
+        cubic_skeleton_run = cubic_skeleton_end - cubic_skeleton_start
+        print("Total elapsed run time: %g seconds" % (cubic_skeleton_run + cubic_skeleton_run))
+    
+    def cuboid_skeleton(self):
+        ''' fill mesh with cuboid skeleton'''
+        # track starting time
+        cuboid_skeleton_start = time.time()
+
+        _, max_normal, intxn = self.max_cube_ray(ext = True)
+        self.ext_max_cube(intxn, max_normal)
+        cube, ranked_cube, size_error = self.max_cube_slice()
+        if (size_error == False):
+            self.combine_pair_partitions(cube, ranked_cube)
+        
+        # track ending time & duration
+        cuboid_skeleton_end = time.time()
+        cuboid_skeleton_run = cuboid_skeleton_end - cuboid_skeleton_start
+        print("Total elapsed run time: %g seconds" % (cuboid_skeleton_run + cuboid_skeleton_run))
+        
+    def max_cube_ray(self, ext = False):
+        """ add a maximally inscribed cube within the opened mesh (via ray tracing) """
+        global x_range, y_range, z_range, Vol_centroid, r_len
+        global face_center, max_cube_vol, max_cube
+        global max_cube_start, max_cube_end, max_cube_run
+        global max_cube_V, max_cube_F
+
+        # # track starting time
+        # max_cube_start = time.time()
 
         # find mesh vertices
         V = np.array(mesh.points)
@@ -184,9 +208,11 @@ class MainWindow(Qt.QMainWindow):
         x_range = abs(ranges[0] - ranges[1])
         y_range = abs(ranges[2] - ranges[3])
         z_range = abs(ranges[4] - ranges[5])
+        print("x:", x_range)
+        print("y:", y_range)
+        print("z:", z_range)
 
         # show centroid
-        # self.centroid()
         Vol_centroid = np.array([0,0,0]) # overwrite centroid with origin at principle axes
         self.plotter.add_mesh(pv.PolyData(Vol_centroid), color='r', point_size=20.0, render_points_as_spheres=True)
 
@@ -206,28 +232,31 @@ class MainWindow(Qt.QMainWindow):
             p = bottom[1]
             V = bottom[2]
         
+        # set the furthest ray intersection of the mesh as starting vertex of the cube
+        intxn = V[p,:]
+
         # create and show max cube
-        max_cube_V, max_cube_F, max_cube_vol = self.create_cube(V[p,:], Vol_centroid, np.array([0,0,Vol_centroid[2]]))
+        max_cube_V, max_cube_F, max_cube_vol = self.create_cube(intxn, Vol_centroid, np.array([0,0,Vol_centroid[2]]))
         max_cube = self.plotter.add_mesh(pv.PolyData(max_cube_V, max_cube_F), show_edges=True, line_width=3, color="g", opacity=0.6)
-        max_cube_stored = max_cube
 
         # find & show max cube face centers
         cell_center = pv.PolyData(max_cube_V, max_cube_F).cell_centers()
         face_center = np.array(cell_center.points)
-        #self.plotter.add_mesh(cell_center, color="r", point_size=8, render_points_as_spheres=True)
+        # self.plotter.add_mesh(cell_center, color="r", point_size=8, render_points_as_spheres=True)
 
         # find max cube face normals
         max_normal = pv.PolyData(max_cube_V, max_cube_F).cell_normals
 
         # max cube volume
-        max_cube_vol = float(format(max_cube_vol, ".5f"))
-        print("Max Cube Volume:", max_cube_vol)
+        if (ext == False):
+            max_cube_vol = float(format(max_cube_vol, ".5f"))
+            print("Max Cube Volume:", max_cube_vol)
 
-        # track ending time & duration
-        max_cube_end = time.time()
-        max_cube_run = max_cube_end - max_cube_start
+        # # track ending time & duration
+        # max_cube_end = time.time()
+        # max_cube_run = max_cube_end - max_cube_start
 
-        return face_center
+        return face_center, max_normal, intxn
 
     def cube_center_ray(self, start, dir):
         ''' from starting point shoot out n rays to find vertices of possible cubes '''
@@ -237,8 +266,6 @@ class MainWindow(Qt.QMainWindow):
         r_num = 1
         r_rot = np.pi/2
         r_dec = -2*np.pi/r_num
-        l_wid = 5
-        pt_size = 20
         ray_size = np.zeros((4, 3))
         r_dir = ray_size
         r_dir_norm = ray_size
@@ -255,31 +282,32 @@ class MainWindow(Qt.QMainWindow):
                 if (j == 0) and (dir == 'z'):
                     r_dir[0] = np.array([np.sqrt(2)/2 * np.cos(np.pi/4 + r_dec * i), np.sqrt(2)/2 * np.sin(np.pi/4 + r_dec * i), 0.5])
                     r_dir_norm[0] = r_dir[0] / np.linalg.norm(r_dir[0])
-                    r_end[0] = Vol_centroid + r_dir_norm[0] * r_len
+                    r_end[0] = start + r_dir_norm[0] * r_len
                     # set rotation matrix about 'z'
                     R = self.rot_axis(np.array([0,0,1]))
                 elif (j == 0) and (dir == '-z'):
                     r_dir[0] = np.array([np.sqrt(2)/2 * np.cos(np.pi/4 + r_dec * i), np.sqrt(2)/2 * np.sin(np.pi/4 + r_dec * i), -0.5])
                     r_dir_norm[0] = r_dir[0] / np.linalg.norm(r_dir[0])
-                    r_end[0] = Vol_centroid + r_dir_norm[0] * r_len
+                    r_end[0] = start + r_dir_norm[0] * r_len
                     # set rotation matrix about '-z'
                     R = self.rot_axis(np.array([0,0,-1]))
                 else:
-                    r_end[j] = np.dot(R(j*r_rot), (r_end[0]-Vol_centroid).T).T
-                    r_end[j] = r_end[j] + Vol_centroid
+                    r_end[j] = np.dot(R(j*r_rot), (r_end[0] - start).T).T
+                    r_end[j] = r_end[j] + start
 
                 # perform ray trace
-                r_pts, r_ind = mesh.ray_trace(Vol_centroid, r_end[j])
+                r_pts, _ = mesh.ray_trace(start, r_end[j])
 
                 # create an array of ray intersections
                 r_int = np.append(r_int, r_pts[0])
             
             r_int = np.reshape(r_int, (4,3))
-            ori_nearest, ori_p, ori_V = self.nearest_pt(r_int, Vol_centroid)
+            _, ori_p, ori_V = self.nearest_pt(r_int, start)
             r_int = []
             ori_r_int = np.append(ori_r_int, ori_V[ori_p,:])
 
         ori_r_int = np.reshape(ori_r_int, (r_num,3))
+        
         return ori_r_int
 
     def nearest_pt(self, vert, starting_pt):
@@ -379,6 +407,65 @@ class MainWindow(Qt.QMainWindow):
         R = lambdify(t, R_t)
         return R
 
+    def ext_max_cube(self, furthest_pt, max_normal):
+        ''' extend max cube into maximally inscribed cuboid '''
+        global face_center, ext_max_cube, ext_max_cube_vol
+
+        # find the 3 out of 6 normal directions the max cube can be extended towards
+        ext_dir = np.empty(shape=(3,3)) 
+        main_dir = Vol_centroid - furthest_pt
+        ind = 0
+        for i in range(0, 6):
+            if np.dot(max_normal[i,:], main_dir) > 0:
+                ext_dir[ind,:] = max_normal[i,:]
+                ind +=1
+
+        # extend faces by shooting a ray from the 4 vertices on each extendable face
+        # in the direction of its face normal. Find the nearest intersection and
+        # it would be the limit of extension for that face
+        for i in range(0, 3):
+            F_ind = np.where((max_normal == ext_dir[i]).all(axis=1))
+            np.reshape(max_cube_F, (6,5))
+            faces = np.reshape(max_cube_F, (6,5))
+            V_ind = faces[F_ind][0,1:5]
+            current_V = np.vstack([max_cube_V[V_ind[0]], max_cube_V[V_ind[1]], max_cube_V[V_ind[2]], max_cube_V[V_ind[3]]])
+            ext_V = self.ext_ray(current_V, ext_dir[i])
+            max_cube_V[V_ind] = ext_V
+
+        # create & show extended max cube
+        ext_max_cube = pv.PolyData(max_cube_V, max_cube_F)
+        self.plotter.add_mesh(ext_max_cube, show_edges=True, color="y", opacity=0.6)
+
+        # find face centers of extended max cube
+        cell_center = ext_max_cube.cell_centers()
+        face_center = np.array(cell_center.points)
+
+        # find face normals of the extended max cube
+        max_normal = ext_max_cube.cell_normals
+
+        # extended max cube volume
+        ext_max_cube_vol = float(format(ext_max_cube.volume, ".5f"))
+        print("Extended Max Cube Volume:", ext_max_cube_vol)
+
+    def ext_ray(self, current_V, ext_dir):
+        ''' shoot rays from vertices of a cube face towards face normal & obtain intersections with mesh '''
+        # initialize variables
+        r_len = np.sqrt((x_range/2)**2 + (y_range/2)**2 + (z_range/2)**2)
+        ext_end = current_V + ext_dir * np.ones((4,1)) * r_len
+        ext_int = [None] * 4
+        ext_dis = np.zeros(4)
+
+        # perform ray tracing per extending face vertex
+        for i in range(0,4):
+            ext_int, ind = mesh.ray_trace(current_V[i], ext_end[i])
+            ext_dis[i] = np.sqrt((ext_int[0][0] - current_V[i][0])**2 + (ext_int[0][1] - current_V[i][1])**2
+                                 + (ext_int[0][2] - current_V[i][2])**2)
+
+        # extend vertices by the shortest intersection distance
+        ext_V = current_V + ext_dir * np.ones((4,1)) * min(ext_dis)
+        
+        return ext_V
+
     def search_string_in_file(self, read_obj, file_name, string_to_search, search_start_line = None):
         ''' search for the given string in file and return lines
          containing that string, along with line numbers '''
@@ -415,14 +502,13 @@ class MainWindow(Qt.QMainWindow):
         return a, b, c
 
     def max_cube_slice(self):
-        ''' splitting the mesh in 27 regions according to the faces of max_cube
-        and appending small, isolated partitions to the 27 main partitions '''
+        ''' splitting the mesh in 27 regions according to the faces of max_cube '''
         global face_center
+
         # creating a 3x3x3 matrix representing the 27 regions
         height = np.zeros(3, dtype=object)
         side = np.zeros((3,3), dtype=object)
         cube = np.zeros((3,3,3), dtype=object)
-        extra = np.zeros((3,3,3), dtype=object)
 
         # find face center x- and y-directions
         if abs(np.around(face_center[1][0],decimals=5)) != 0:
@@ -457,16 +543,22 @@ class MainWindow(Qt.QMainWindow):
         z_min = face_center[5]
 
         # spliting the mesh along the z-axis
-        height[0] = mesh.clip_closed_surface('z', origin=z_max).clean()
-        height[1] = mesh.clip_closed_surface('-z', origin=z_max).clip_closed_surface('z', origin=z_min).clean()
-        height[2] = mesh.clip_closed_surface('-z', origin=z_min).clean()
+        height[0] = mesh.clip_closed_surface('z', origin=z_max)
+        height[1] = mesh.clip_closed_surface('-z', origin=z_max).clip_closed_surface('z', origin=z_min)
+        height[2] = mesh.clip_closed_surface('-z', origin=z_min)
+        # height[0] = mesh.clip('z', origin = z_max, invert = False)
+        # height[1] = mesh.clip('-z', origin = z_max, invert = False).clip('z', origin = z_min, invert = False)
+        # height[2] = mesh.clip('-z', origin = z_min, invert = False)
 
         # spliting the mesh along the y-axis
         for k in range(0,3):
             try:
-                side[0,k] = height[k].clip_closed_surface('y', origin=y_max).clean()
-                side[1,k] = height[k].clip_closed_surface('-y', origin=y_max).clip_closed_surface('y', origin=y_min).clean()
-                side[2,k] = height[k].clip_closed_surface('-y', origin=y_min).clean()
+                side[0,k] = height[k].clip_closed_surface('y', origin=y_max)
+                side[1,k] = height[k].clip_closed_surface('-y', origin=y_max).clip_closed_surface('y', origin=y_min)
+                side[2,k] = height[k].clip_closed_surface('-y', origin=y_min)
+                # side[0,k] = height[k].clip('y', origin = y_max, invert = False)
+                # side[1,k] = height[k].clip('-y', origin = y_max, invert = False).clip('y', origin = y_min, invert = False)
+                # side[2,k] = height[k].clip('-y', origin = y_min, invert = False)
             except ValueError:
                 pass
 
@@ -474,23 +566,60 @@ class MainWindow(Qt.QMainWindow):
         for j in range(0,3):
             for k in range(0,3):
                 try:
-                    cube[0,j,k] = side[j,k].clip_closed_surface('x', origin=x_max).clean()
+                    cube[0,j,k] = side[j,k].clip_closed_surface('x', origin=x_max)
+                    # cube[0,j,k] = side[j,k].clip('x', origin = x_max, invert = False)
                     cube[0,j,k] = cube[0,j,k].split_bodies()
                     
                     cube[1,j,k] = side[j,k].clip_closed_surface('x', origin=x_min).clip_closed_surface('-x', origin=x_max).clean() # need to test for knight
+                    # cube[1,j,k] = side[j,k].clip('x', origin = x_min, invert = False).clip('-x', origin = x_max, invert = False)
                     cube[1,j,k] = cube[1,j,k].split_bodies()
                     
-                    cube[2,j,k] = side[j,k].clip_closed_surface('-x', origin=x_min).clean()
+                    cube[2,j,k] = side[j,k].clip_closed_surface('-x', origin=x_min)
+                    # cube[2,j,k] = side[j,k].clip('-x', origin = x_min, invert = False)
                     cube[2,j,k] = cube[2,j,k].split_bodies()
                 except ValueError:
                     pass
 
+        self.plotter.clear()
+
+        # partition color choices
+        color = ["r", "cyan", "g", "y"]
+        ind = -1
+
+        # display partitions if SizeError is raised
+        for i in range(0,3):
+            for j in range(0,3):
+                for k in range(0,3):
+                    # rotate the 4 indicating colors
+                    if ind == 3:
+                        ind = 0
+                    else:
+                        ind += 1
+                    if cube[i,j,k]!= 0:
+                        self.plotter.add_mesh(cube[i,j,k], show_edges=True, color=color[ind], opacity=1)
+
+        # append island partitions to the 26 main partitions
+        appended_cube = self.append_island(cube)
+
+        # rank all partitions by volume in descending order
+        ranked_cube = self.rank_partitions(appended_cube)
+
+        # check if the initial partition produces parts larger than the print volume
+        size_error = self.partition_size_check(appended_cube)
+
+        return cube, ranked_cube, size_error
+
+    def append_island(self, cube):
+        ''' appending island partitions to the 26 main partitions '''
         # clear plotter
         self.plotter.clear()
 
         # start output text file
         report = open("report.txt","w")
         print("Island partitions:", end = "\n", file = report)
+
+        # creating a 3x3x3 matrix representing the 27 regions
+        extra = np.zeros((3,3,3), dtype=object)
 
         # separate island partitions (extra[i,j,k])
         for i in range(0,3):
@@ -532,7 +661,7 @@ class MainWindow(Qt.QMainWindow):
                         while l < extra_num_1:
                             if (i == 0) or (i == 2):
                                 # print(i,j,k, "\n", file = report)
-                                if extra[i,j,k][l].merge(cube[1,j,k][0]).split_bodies().n_blocks == 1:
+                                if (cube[1,j,k] != 0) and (extra[i,j,k][l].merge(cube[1,j,k][0]).split_bodies().n_blocks == 1):
                                     cube[1,j,k].append(extra[i,j,k][l])
                                     print("cube[", 1, j, k, "][ 0 ] <-- extra[", i, j, k, "][", l ,"]", end = "\n", file = report)
                                     cube[1,j,k] = pv.MultiBlock([cube[1,j,k].combine()])
@@ -569,7 +698,7 @@ class MainWindow(Qt.QMainWindow):
                                         break
                             elif i == 1:
                                 # print(i,j,k, "\n", file = report)
-                                if extra[i,j,k][l].merge(cube[0,j,k][0]).split_bodies().n_blocks == 1:
+                                if (cube[0,j,k] != 0) and (extra[i,j,k][l].merge(cube[0,j,k][0]).split_bodies().n_blocks == 1):
                                     cube[0,j,k].append(extra[i,j,k][l])
                                     print("cube[", 0, j, k, "][ 0 ] <-- extra[", i, j, k, "][", l ,"]", end = "\n", file = report)
                                     cube[0,j,k] = pv.MultiBlock([cube[0,j,k].combine()])
@@ -604,7 +733,7 @@ class MainWindow(Qt.QMainWindow):
                                             m += 1
                                     if break_outter == True:
                                         break
-                                elif extra[i,j,k][l].merge(cube[2,j,k][0]).split_bodies().n_blocks == 1:
+                                elif (cube[2,j,k] != 0) and (extra[i,j,k][l].merge(cube[2,j,k][0]).split_bodies().n_blocks == 1):
                                     cube[2,j,k].append(extra[i,j,k][l])
                                     print("cube[", 2, j, k, "][ 0 ] <-- extra[", i, j, k, "][", l ,"]", end = "\n", file = report)
                                     cube[2,j,k] = pv.MultiBlock([cube[2,j,k].combine()])
@@ -624,7 +753,7 @@ class MainWindow(Qt.QMainWindow):
                                                 break_outter = True
                                                 break
                                             else:
-                                                extra[2,j,k][m] = extra[2,j,k][m].append(extra[i,j,k][l])
+                                                extra[2,j,k][m] = extra[2,j,k][m].merge(extra[i,j,k][l])
                                                 partition = " extra[ " + str(2) + " " + str(j) + " " + str(k) + " ][ " + str(m) + " ]"
                                                 a, b, c = self.search_string_in_file(report, "report.txt", partition)
                                                 report = open("report.txt", "a")
@@ -642,7 +771,7 @@ class MainWindow(Qt.QMainWindow):
 
                             if (j == 0) or (j == 2):
                                 # print(i,j,k, "\n", file = report) 
-                                if extra[i,j,k][l].merge(cube[i,1,k][0]).split_bodies().n_blocks == 1:
+                                if (cube[i,1,k] != 0) and (extra[i,j,k][l].merge(cube[i,1,k][0]).split_bodies().n_blocks == 1):
                                     cube[i,1,k].append(extra[i,j,k][l])
                                     print("cube[", i, 1, k, "][ 0 ] <-- extra[", i, j, k, "][", l ,"]", end = "\n", file = report)
                                     cube[i,1,k] = pv.MultiBlock([cube[i,1,k].combine()])
@@ -679,7 +808,7 @@ class MainWindow(Qt.QMainWindow):
                                         break
                             elif j == 1:
                                 # print(i,j,k, "\n", file = report)
-                                if extra[i,j,k][l].merge(cube[i,0,k][0]).split_bodies().n_blocks == 1:
+                                if (cube[i,0,k] != 0) and (extra[i,j,k][l].merge(cube[i,0,k][0]).split_bodies().n_blocks == 1):
                                     cube[i,0,k].append(extra[i,j,k][l])
                                     print("cube[", i, 0, k, "][ 0 ] <-- extra[", i, j, k, "][", l ,"]", end = "\n", file = report)
                                     cube[i,0,k] = pv.MultiBlock([cube[i,0,k].combine()])
@@ -699,7 +828,7 @@ class MainWindow(Qt.QMainWindow):
                                                 break_outter = True
                                                 break
                                             else:
-                                                extra[i,0,k][m] = extra[i,0,k][m].append(extra[i,j,k][l])
+                                                extra[i,0,k][m] = extra[i,0,k][m].merge(extra[i,j,k][l])
                                                 partition = " extra[ " + str(i) + " " + str(0) + " " + str(k) + " ][ " + str(m) + " ]"
                                                 a, b, c = self.search_string_in_file(report, "report.txt", partition)
                                                 report = open("report.txt", "a")
@@ -714,7 +843,7 @@ class MainWindow(Qt.QMainWindow):
                                             m += 1
                                     if break_outter == True:
                                         break
-                                elif extra[i,j,k][l].merge(cube[i,2,k][0]).split_bodies().n_blocks == 1:
+                                elif (cube[i,2,k] != 0) and (extra[i,j,k][l].merge(cube[i,2,k][0]).split_bodies().n_blocks == 1):
                                     cube[i,2,k].append(extra[i,j,k][l])
                                     print("cube[", i, 2, k, "][ 0 ] <-- extra[", i, j, k, "][", l ,"]", end = "\n", file = report)
                                     cube[i,2,k] = pv.MultiBlock([cube[i,2,k].combine()])
@@ -752,7 +881,7 @@ class MainWindow(Qt.QMainWindow):
 
                             if (k == 0) or (k == 2):
                                 # print(i,j,k, "\n", file = report)
-                                if extra[i,j,k][l].merge(cube[i,j,1][0]).split_bodies().n_blocks == 1:
+                                if (cube[i,j,1] != 0) and (extra[i,j,k][l].merge(cube[i,j,1][0]).split_bodies().n_blocks == 1):
                                     cube[i,j,1].append(extra[i,j,k][l])
                                     print("cube[", i, j, 1, "][ 0 ] <-- extra[", i, j, k, "][", l ,"]", end = "\n", file = report)
                                     cube[i,j,1] = pv.MultiBlock([cube[i,j,1].combine()])
@@ -790,7 +919,7 @@ class MainWindow(Qt.QMainWindow):
                                         break
                             elif k == 1:
                                 # print(i,j,k, "\n", file = report)
-                                if extra[i,j,k][l].merge(cube[i,j,0][0]).split_bodies().n_blocks == 1:
+                                if (cube[i,j,0] != 0 ) and (extra[i,j,k][l].merge(cube[i,j,0][0]).split_bodies().n_blocks == 1):
                                     cube[i,j,0].append(extra[i,j,k][l])
                                     print("cube[", i, j, 0, "][ 0 ] <-- extra[", i, j, k, "][", l ,"]", end = "\n", file = report)
                                     cube[i,j,0] = pv.MultiBlock([cube[i,j,0].combine()])
@@ -825,7 +954,7 @@ class MainWindow(Qt.QMainWindow):
                                             m += 1
                                     if break_outter == True:
                                         break
-                                elif extra[i,j,k][l].merge(cube[i,j,2][0]).split_bodies().n_blocks == 1:
+                                elif (cube[i,j,2] != 0) and (extra[i,j,k][l].merge(cube[i,j,2][0]).split_bodies().n_blocks == 1):
                                     cube[i,j,2].append(extra[i,j,k][l])
                                     print("cube[", i, j, 2, "][ 0 ] <-- extra[", i, j, k, "][", l ,"]", end = "\n", file = report)
                                     cube[i,j,2] = pv.MultiBlock([cube[i,j,2].combine()])
@@ -861,32 +990,58 @@ class MainWindow(Qt.QMainWindow):
                                     if break_outter == True:
                                         break
         
-        # close report
+        # close report.txt
         report.close()
 
-        ranked_cube = self.rank_partitions(cube)
+        # keeping variable name uniformity
+        appened_cube = cube.copy()
 
-        # # section color choices
+        return appened_cube
+
+    def partition_size_check(self, cube):
+        # initiate size_error check & loop break conditions
+        size_error = False
+        break_j = False
+        break_i = False
+
+        # check if each partition fit within print volume
+        for i in range(0,3):
+            for j in range(0,3):
+                for k in range(0,3):
+                    if (i == 1) and (j == 1) and (k == 1):
+                        pass
+                    elif (cube[i,j,k] != 0) and (self.fit_check(cube[i,j,k]) == False):
+                        print("\nSizeError: Initial partition does not fit print volume.\n")
+                        size_error = True
+                        break_j = True
+                        break_i = True
+                        break
+                if (break_j == True):
+                    break
+            if (break_i == True):
+                break
+
+        # partition color choices
         # color = ["r", "b", "g", "y", "cyan"]
         # ind = -1
 
-        # # display sections
-        # for i in range(0,3):
-        #     for j in range(0,3):
-        #         for k in range(0,3):
-        #             # rotate the 5 indicating colors
-        #             if ind == 4:
-        #                 ind = 0
-        #             else:
-        #                 ind += 1
-        #             if cube[i,j,k]!= 0:
-        #             # if extra[i,j,k].n_blocks!= 0:
-        #                 self.plotter.add_mesh(cube[i,j,k], show_edges=True, color=color[ind], opacity=0.4)
-        #                 # self.plotter.add_mesh(extra[i,j,k], show_edges=True, color=color[ind], opacity=0.4)
-        #                 # filename = "section [" + str(i) + "," + str(j) + "," + str(k) +"].STL"
-        #                 # cube[i,j,k].save("output/"+ filename)
+        # display partitions if SizeError is raised
+        if (size_error == True):
+            for i in range(0,3):
+                for j in range(0,3):
+                    for k in range(0,3):
+                        # # rotate the 5 indicating colors
+                        # if ind == 4:
+                        #     ind = 0
+                        # else:
+                        #     ind += 1
+                        if cube[i,j,k]!= 0:
+                        # if extra[i,j,k].n_blocks!= 0:
+                            self.plotter.add_mesh(cube[i,j,k], show_edges=True, color="r", opacity=0.4)
+                            # self.plotter.add_mesh(cube[i,j,k], show_edges=True, color=color[ind], opacity=0.4)
+                            # self.plotter.add_mesh(extra[i,j,k], show_edges=True, color=color[ind], opacity=0.4)
     
-        return cube, ranked_cube
+        return size_error
 
     def combine_corner_partitions(self, cube):
         ''' combine pairs of partitions at the corners to reduce total number of partitions '''
@@ -967,42 +1122,83 @@ class MainWindow(Qt.QMainWindow):
         
         # initiate variables
         dtype = [('indexes', object), ('volume', float), ('number', int)]
-        ranked_cube = np.zeros(27, dtype=dtype)
+        ranked_cube = np.zeros(26, dtype=dtype)
         w = -1
 
         for i in range(0,3):
             for j in range(0,3):
                 for k in range(0,3):
                     if cube[i,j,k] != 0:
-                        w += 1
-                        ranked_cube[w] = ([i,j,k], cube[i,j,k].volume, w)
+                        # store partition indices, volume, and number in ranked_cube.
+                        # (center cube is excluded from the ranking process)
+                        if (i == 1) and (j == 1) and (k == 1):
+                            pass
+                        else:
+                            w += 1
+                            ranked_cube[w] = ([i,j,k], cube[i,j,k].volume, w)
+        # rank the partition by volume from largest to smallest
         ranked_cube = np.sort(ranked_cube, order='volume')[::-1]
         print(ranked_cube, end = "\n", file = report)
 
         return ranked_cube
     
+    def fit_check(self, partition):
+        ''' check if the joined partition is within the pre-determined print volume '''
+        # set 3D printer print volume
+        printer_x_dim = 9.0
+        printer_y_dim = 5.9
+        printer_z_dim = 5.0
+        # initialize fit & orientation check
+        fit = False
+        ori_check = np.zeros(6)
+
+        # establish x,y,z bounds of partition checked
+        x_min, x_max, y_min, y_max, z_min, z_max = partition.bounds
+        x_bound = x_max - x_min
+        y_bound = y_max - y_min
+        z_bound = z_max - z_min
+
+        # check if partition volume is larger than print volume
+        if (partition.volume < printer_x_dim * printer_y_dim * printer_z_dim):
+            fit = True
+
+        # Reorient the partition (6 possible orientations) to check for fit within print volume 
+        if (x_bound <= printer_x_dim) and (y_bound <= printer_y_dim) and (z_bound <= printer_z_dim):
+            ori_check[0] = 1
+        elif (x_bound <= printer_x_dim) and (z_bound <= printer_y_dim) and (y_bound <= printer_z_dim):
+            ori_check[1] = 1
+        elif (y_bound <= printer_x_dim) and (z_bound <= printer_y_dim) and (x_bound <= printer_z_dim):
+            ori_check[2] = 1
+        elif (y_bound <= printer_x_dim) and (x_bound <= printer_y_dim) and (z_bound <= printer_z_dim):
+            ori_check[3] = 1
+        elif (z_bound <= printer_x_dim) and (x_bound <= printer_y_dim) and (y_bound <= printer_z_dim):
+            ori_check[4] = 1
+        elif (z_bound <= printer_x_dim) and (y_bound <= printer_y_dim) and (x_bound <= printer_z_dim):
+            ori_check[5] = 1
+        # check if any of the orientation can fit the partition into print volume
+        if (np.sum(ori_check) > 0):
+            fit = True
+        
+        return fit
+
     def combine_pair_partitions(self, cube, ranked_cube):
         ''' trying to combine with all possible neighbors
         and selecting the pair that fits inside the preset print volume '''
         # initiate variable
         used = [[1,1,1]]
-        threshold = False
 
         # print to report
         report = open("report.txt", "a")
         print("\n", file = report)
         print("Combine neighboring partition pairs (largest to smallest):", end = "\n", file = report)
 
-        for w in range(0, 27):
-            # initiate variables
-            repeat = False
-            discard = []
-
+        for w in range(0, 26):
+            # find the x,y,z indices i,j,k
             i = ranked_cube[w][0][0]
             j = ranked_cube[w][0][1]
             k = ranked_cube[w][0][2]
-            print(i,j,k)
 
+            # initiate variables
             i_pair = np.array([], dtype = object)
             i_pair_vol = np.array([], dtype = object)
             i_append = np.array([], dtype = object)
@@ -1012,127 +1208,125 @@ class MainWindow(Qt.QMainWindow):
             k_pair = np.array([], dtype = object)
             k_pair_vol = np.array([], dtype = object)
             k_append = np.array([], dtype = object)
-
-            # for m in range(0, len(used)):
-            #     print("used:", np.int(used[m][0]), np.int(used[m][1]), np.int(used[m][2]))
-            #     print("current:", i, j, k)
-            #     if (np.int(used[m][0]) == i) and (np.int(used[m][1]) == j) and (np.int(used[m][2]) == k):
-            #         repeat = True
-            #         print(repeat)
+            discard = []
 
             if (cube[i,j,k] != 0):
                 if (i == 0) or (i == 2):
-                    if (cube[1,j,k] != 0) and (cube[i,j,k][0].merge(cube[1,j,k][0]).split_bodies().n_blocks == 1):
+                    if (cube[1,j,k] != 0) and (cube[i,j,k][0].merge(cube[1,j,k][0]).split_bodies().n_blocks == 1) and \
+                    (self.fit_check(cube[i,j,k][0].merge(cube[1,j,k][0])) == True):
                         i_pair = np.append(i_pair, [cube[i,j,k][0].merge(cube[1,j,k][0])])
                         i_pair_vol = np.append(i_pair_vol, [i_pair[len(i_pair)-1].volume])
                         i_append = np.append(i_append, [1,j,k])
                 elif (i == 1):
-                    if (cube[0,j,k] != 0) and (cube[i,j,k][0].merge(cube[0,j,k][0]).split_bodies().n_blocks == 1):
+                    if (cube[0,j,k] != 0) and (cube[i,j,k][0].merge(cube[0,j,k][0]).split_bodies().n_blocks == 1) and \
+                    (self.fit_check(cube[i,j,k][0].merge(cube[0,j,k][0])) == True):
                         i_pair = np.append(i_pair, [cube[i,j,k][0].merge(cube[0,j,k][0])])
                         i_pair_vol = np.append(i_pair_vol, [i_pair[len(i_pair)-1].volume])
                         i_append = np.append(i_append, [0,j,k])
-                    if (cube[2,j,k] != 0) and (cube[i,j,k][0].merge(cube[2,j,k][0]).split_bodies().n_blocks == 1):
+                    if (cube[2,j,k] != 0) and (cube[i,j,k][0].merge(cube[2,j,k][0]).split_bodies().n_blocks == 1) and \
+                    (self.fit_check(cube[i,j,k][0].merge(cube[2,j,k][0])) == True):
                         i_pair = np.append(i_pair, [cube[i,j,k][0].merge(cube[2,j,k][0])])
                         i_pair_vol = np.append(i_pair_vol, [i_pair[len(i_pair)-1].volume])
                         i_append = np.append(i_append, [2,j,k])
 
                 if (j == 0) or (j == 2):
-                    if (cube[i,1,k] != 0) and (cube[i,j,k][0].merge(cube[i,1,k][0]).split_bodies().n_blocks == 1):
+                    if (cube[i,1,k] != 0) and (cube[i,j,k][0].merge(cube[i,1,k][0]).split_bodies().n_blocks == 1) and \
+                    (self.fit_check(cube[i,j,k][0].merge(cube[i,1,k][0])) == True):
                         j_pair = np.append(j_pair, [cube[i,j,k][0].merge(cube[i,1,k][0])])
                         j_pair_vol = np.append(j_pair_vol, [j_pair[len(j_pair)-1].volume])
                         j_append = np.append(j_append, [i,1,k])
                 elif (j == 1):
-                    if (cube[i,0,k] != 0) and (cube[i,j,k][0].merge(cube[i,0,k][0]).split_bodies().n_blocks == 1):
+                    if (cube[i,0,k] != 0) and (cube[i,j,k][0].merge(cube[i,0,k][0]).split_bodies().n_blocks == 1) and \
+                    (self.fit_check(cube[i,j,k][0].merge(cube[i,0,k][0])) == True):
                         j_pair = np.append(j_pair, [cube[i,j,k][0].merge(cube[i,0,k][0])])
                         j_pair_vol = np.append(j_pair_vol, [j_pair[len(j_pair)-1].volume])
                         j_append = np.append(j_append, [i,0,k])
-                    if (cube[i,2,k] != 0) and (cube[i,j,k][0].merge(cube[i,2,k][0]).split_bodies().n_blocks == 1):
+                    if (cube[i,2,k] != 0) and (cube[i,j,k][0].merge(cube[i,2,k][0]).split_bodies().n_blocks == 1) and \
+                    (self.fit_check(cube[i,j,k][0].merge(cube[i,2,k][0])) == True):
                         j_pair = np.append(j_pair, [cube[i,j,k][0].merge(cube[i,2,k][0])])
                         j_pair_vol = np.append(j_pair_vol, [j_pair[len(j_pair)-1].volume])
                         j_append = np.append(j_append, [i,2,k])
 
                 if (k == 0) or (k == 2):
-                    if (cube[i,j,1] != 0) and (cube[i,j,k][0].merge(cube[i,j,1][0]).split_bodies().n_blocks == 1):
+                    if (cube[i,j,1] != 0) and (cube[i,j,k][0].merge(cube[i,j,1][0]).split_bodies().n_blocks == 1) and \
+                    (self.fit_check(cube[i,j,k][0].merge(cube[i,j,1][0])) == True):
                         k_pair = np.append(k_pair, [cube[i,j,k][0].merge(cube[i,j,1][0])])
                         k_pair_vol = np.append(k_pair_vol, [k_pair[len(k_pair)-1].volume])
                         k_append = np.append(k_append, [i,j,1])
                 elif (k == 1):
-                    if (cube[i,j,0] != 0) and (cube[i,j,k][0].merge(cube[i,j,0][0]).split_bodies().n_blocks == 1):
+                    if (cube[i,j,0] != 0) and (cube[i,j,k][0].merge(cube[i,j,0][0]).split_bodies().n_blocks == 1) and \
+                    (self.fit_check(cube[i,j,k][0].merge(cube[i,j,0][0])) == True):
                         k_pair = np.append(k_pair, [cube[i,j,k][0].merge(cube[i,j,0][0])])
                         k_pair_vol = np.append(k_pair_vol, [k_pair[len(k_pair)-1].volume])
                         k_append = np.append(k_append, [i,j,0])
-                    if (cube[i,j,2] != 0) and (cube[i,j,k][0].merge(cube[i,j,2][0]).split_bodies().n_blocks == 1):
+                    if (cube[i,j,2] != 0) and (cube[i,j,k][0].merge(cube[i,j,2][0]).split_bodies().n_blocks == 1) and \
+                    (self.fit_check(cube[i,j,k][0].merge(cube[i,j,2][0])) == True):
                         k_pair = np.append(k_pair, [cube[i,j,k][0].merge(cube[i,j,2][0])])
                         k_pair_vol = np.append(k_pair_vol, [k_pair[len(k_pair)-1].volume])
                         k_append = np.append(k_append, [i,j,2])
-            
+
+                # group all possible pairs info into pair_option, append_option, and pair_vol
                 pair_option = np.append(np.append(i_pair, j_pair), k_pair)
-                print("pair_option:\n", pair_option)
                 append_option = np.append(np.append(i_append, j_append), k_append)
+                pair_vol = np.append(np.append(i_pair_vol, j_pair_vol), k_pair_vol)
+                # format append_option so x,y,z indices are kept in arrays of 3
                 row = int((len(append_option) + 1) / 3)
                 append_option = np.reshape(append_option, (row, 3))
-                print("append_option:\n", append_option)
-                pair_vol = np.append(np.append(i_pair_vol, j_pair_vol), k_pair_vol)
-                print("pair_vol:\n", pair_vol)
                 
-                # remove used partitions
+                # indicate partitions used to form pairs
                 for n in range(0, len(append_option)):
                     for m in range(0, len(used)):
                         if (np.int(used[m][0]) == append_option[n][0]) and (np.int(used[m][1]) == append_option[n][1]) and (np.int(used[m][2]) == append_option[n][2]):
                             discard.append(n)
+                # remove partitions used to form pairs
                 if (discard != None):
-                    print(discard)
                     pair_option = np.delete(pair_option, discard)
-                    print("pair_option:\n", pair_option)
                     append_option = np.delete(append_option, discard, 0)
-                    print("append_option:\n", append_option)
                     pair_vol = np.delete(pair_vol, discard)
-                    print("pair_vol:\n", pair_vol)
-                    print(pair_vol.size)
 
-                # select optimal combination
-                
+                # select largest pair option
                 if pair_vol.size != 0:
-                    max_pair_vol = max(pair_vol) # later will change to fitting within the print volume
+                    max_pair_vol = max(pair_vol)
                 else:
                     max_pair_vol = 0
 
+                # execute pair-joining
                 if max_pair_vol != 0:
+                    # find index of the pair option that has largest volume
                     x = np.where(pair_vol == max_pair_vol)
                     x = x[0][0]
+                    # record the pair-joining step in report.txt
                     print("cube[", i, j, k, "][ 0 ] <-- cube[", ' '.join(map(str, append_option[x])), "][ 0 ]", end = "\n", file = report)
-                    # partition = "cube[ " + str(i) + " " + str(j) + " " + str(k) + " ][ 0 ]"
-                    # _, _, _, n = self.search_string_in_file(report, "report.txt", partition, search_start_line = "Combine neighboring partition pairs")
+                    # assign optimal pair data to the joined-to partition & delete info from the joined-from partition
                     cube[i,j,k] = pv.MultiBlock([pair_option[x]])
                     cube[append_option[x][0], append_option[x][1], append_option[x][2]] = 0
+                    # add the joined-from partition to the list of the used partitions
                     used = np.append(used, [i,j,k])
+                    # reformat "used" so x,y,z indices are kept in arrays of 3
                     row = int((len(used) + 1) / 3)
                     used = np.reshape(used, (row, 3))
-                    # print(used[0][0].dtype)
-            else:
-                pass
 
         # empty the output folder
         files = glob.glob('output/*.STL')
         for f in files:
             os.remove(f)
 
-        # section color choices
-        color = ["y", "g", "r", "b", "cyan"]
+        # partition color options
+        color = ["y", "g", "r", "b"]
         ind = -1
 
-        # display sections
+        # display partitions
         for i in range(0,3):
             for j in range(0,3):
                 for k in range(0,3):
                     if cube[i,j,k] != 0:
-                        # display partitions, rotate through the 5 indicating colors
-                        if ind == 4:
+                        # rotate through the 4 partition plotting colors
+                        if ind == 3:
                             ind = 0
                         else:
                             ind += 1
-                        self.plotter.add_mesh(cube[i,j,k], show_edges=True, color=color[ind], opacity=0.8)
-
+                        # self.plotter.add_mesh(cube[i,j,k].outline(), show_edges=True, color=color[ind], opacity=0.8)
+                        self.plotter.add_mesh(cube[i,j,k], show_edges=True, color=color[ind], opacity=0.3)
                         # save combined partitions
                         file_name = "section [" + str(i) + "," + str(j) + "," + str(k) +"].STL"
                         pv.save_meshio("output/"+ file_name, cube[i,j,k][0])
@@ -1145,22 +1339,8 @@ class MainWindow(Qt.QMainWindow):
         # find max cube
         self.max_cube_ray(value)
 
-        # # bypass error
-        # try:
-        #     next_rays, next_ints, next_cubes, r_num
-        # except NameError:
-        #     next_cubes = None
-        #     r_num = 0
-
-        # # remove old rays
-        # if (r_num != 0) and (r_num == int(value[0])):
-        #     return
-        # elif (r_num != 0) and (next_cubes != None):
-        #     for i in range(0,6):
-        #         self.plotter.remove_actor(next_cubes[i])
-
-        # track starting time
-        next_cube_start = time.time()
+        # # track starting time
+        # next_cube_start = time.time()
 
         # initiate variables
         next_cube_vol_sum = 0
@@ -1187,7 +1367,7 @@ class MainWindow(Qt.QMainWindow):
             # initialize ray trace parameters
             l_wid = 3
             pt_size = 10
-            r_len = np.sqrt((x_range/2)**2 + (y_range/2)**2 + (z_range/2)**2)
+            # r_len = np.sqrt((x_range/2)**2 + (y_range/2)**2 + (z_range/2)**2)
             r_int = []
             ori_r_int = []
             
@@ -1243,10 +1423,10 @@ class MainWindow(Qt.QMainWindow):
         print("Packed Volume:", pack_vol)
         print("Packing Efficiency:", pack_percent)
 
-        # track starting time
-        next_cube_end = time.time()
-        next_cube_run = next_cube_end - next_cube_start
-        print("Total elapsed run time: %g seconds" % (max_cube_run + next_cube_run))
+        # # track starting time
+        # next_cube_end = time.time()
+        # next_cube_run = next_cube_end - next_cube_start
+        # print("Total elapsed run time: %g seconds" % (max_cube_run + next_cube_run))
 
         return
     
