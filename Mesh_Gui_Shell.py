@@ -1,4 +1,5 @@
 import pyvista as pv
+from pyvista.core.pointset import PolyData
 import sympy as sp
 from sympy import Matrix, lambdify
 import numpy as np
@@ -73,9 +74,14 @@ class MainWindow(Qt.QMainWindow):
         pre = trimesh.load(file_path)
         orient = pre.principal_inertia_transform
         pre = pre.apply_transform(orient)
+        # a, b = pre.symmetry_section
+        # print(pre.symmetry_section)
+        # y = [0,-1,0]
+        # sym_orient = trimesh.geometry.align_vectors(y, a)
+        # pre = pre.apply_transform(sym_orient)
         pre.export('data/'+ mesh_name + '_oriented.STL')
         mesh = pv.read('data/'+ mesh_name + '_oriented.STL')
-        mesh.points *= 30
+        # mesh.points /= 30
 
         # print mesh info
         print("Mesh Name:", mesh_name)
@@ -166,8 +172,9 @@ class MainWindow(Qt.QMainWindow):
 
         self.max_cube_ray()
         cube, ranked_cube, size_error = self.max_cube_slice()
-        if (size_error == False):
-            self.combine_pair_partitions(cube, ranked_cube)
+        # if (size_error == False):
+        #     self.combine_pair_partitions(cube, ranked_cube)
+        self.combine_pair_partitions(cube, ranked_cube)
 
         # track ending time & duration
         cubic_skeleton_end = time.time()
@@ -180,10 +187,11 @@ class MainWindow(Qt.QMainWindow):
         cuboid_skeleton_start = time.time()
 
         _, max_normal, intxn = self.max_cube_ray(ext = True)
-        self.ext_max_cube(intxn, max_normal)
+        self.max_cuboid(intxn, max_normal)
         cube, ranked_cube, size_error = self.max_cube_slice()
-        if (size_error == False):
-            self.combine_pair_partitions(cube, ranked_cube)
+        # if (size_error == False):
+        #     self.combine_pair_partitions(cube, ranked_cube)
+        self.combine_pair_partitions(cube, ranked_cube)
         
         # track ending time & duration
         cuboid_skeleton_end = time.time()
@@ -193,12 +201,13 @@ class MainWindow(Qt.QMainWindow):
     def max_cube_ray(self, ext = False):
         """ add a maximally inscribed cube within the opened mesh (via ray tracing) """
         global x_range, y_range, z_range, Vol_centroid, r_len
-        global face_center, max_cube_vol, max_cube
+        global face_center, max_cube_vol, max_cube, max_cuboid
         global max_cube_start, max_cube_end, max_cube_run
         global max_cube_V, max_cube_F
 
-        # # track starting time
-        # max_cube_start = time.time()
+        # initiate variables
+        max_cube = 0
+        max_cuboid = 0
 
         # find mesh vertices
         V = np.array(mesh.points)
@@ -237,7 +246,8 @@ class MainWindow(Qt.QMainWindow):
 
         # create and show max cube
         max_cube_V, max_cube_F, max_cube_vol = self.create_cube(intxn, Vol_centroid, np.array([0,0,Vol_centroid[2]]))
-        max_cube = self.plotter.add_mesh(pv.PolyData(max_cube_V, max_cube_F), show_edges=True, line_width=3, color="g", opacity=0.6)
+        max_cube = pv.PolyData(max_cube_V, max_cube_F)
+        self.plotter.add_mesh(max_cube, show_edges=True, line_width=3, color="g", opacity=0.6)
 
         # find & show max cube face centers
         cell_center = pv.PolyData(max_cube_V, max_cube_F).cell_centers()
@@ -407,9 +417,9 @@ class MainWindow(Qt.QMainWindow):
         R = lambdify(t, R_t)
         return R
 
-    def ext_max_cube(self, furthest_pt, max_normal):
+    def max_cuboid(self, furthest_pt, max_normal):
         ''' extend max cube into maximally inscribed cuboid '''
-        global face_center, ext_max_cube, ext_max_cube_vol
+        global face_center, max_cuboid, max_cuboid_vol
 
         # find the 3 out of 6 normal directions the max cube can be extended towards
         ext_dir = np.empty(shape=(3,3)) 
@@ -433,19 +443,19 @@ class MainWindow(Qt.QMainWindow):
             max_cube_V[V_ind] = ext_V
 
         # create & show extended max cube
-        ext_max_cube = pv.PolyData(max_cube_V, max_cube_F)
-        self.plotter.add_mesh(ext_max_cube, show_edges=True, color="y", opacity=0.6)
+        max_cuboid = pv.PolyData(max_cube_V, max_cube_F)
+        self.plotter.add_mesh(max_cuboid, show_edges=True, color="y", opacity=0.6)
 
         # find face centers of extended max cube
-        cell_center = ext_max_cube.cell_centers()
+        cell_center = max_cuboid.cell_centers()
         face_center = np.array(cell_center.points)
 
         # find face normals of the extended max cube
-        max_normal = ext_max_cube.cell_normals
+        max_normal = max_cuboid.cell_normals
 
         # extended max cube volume
-        ext_max_cube_vol = float(format(ext_max_cube.volume, ".5f"))
-        print("Extended Max Cube Volume:", ext_max_cube_vol)
+        max_cuboid_vol = float(format(max_cuboid.volume, ".5f"))
+        print("Extended Max Cube Volume:", max_cuboid_vol)
 
     def ext_ray(self, current_V, ext_dir):
         ''' shoot rays from vertices of a cube face towards face normal & obtain intersections with mesh '''
@@ -543,22 +553,22 @@ class MainWindow(Qt.QMainWindow):
         z_min = face_center[5]
 
         # spliting the mesh along the z-axis
-        height[0] = mesh.clip_closed_surface('z', origin=z_max)
-        height[1] = mesh.clip_closed_surface('-z', origin=z_max).clip_closed_surface('z', origin=z_min)
-        height[2] = mesh.clip_closed_surface('-z', origin=z_min)
-        # height[0] = mesh.clip('z', origin = z_max, invert = False)
-        # height[1] = mesh.clip('-z', origin = z_max, invert = False).clip('z', origin = z_min, invert = False)
-        # height[2] = mesh.clip('-z', origin = z_min, invert = False)
+        # height[0] = mesh.clip_closed_surface('z', origin=z_max)
+        # height[1] = mesh.clip_closed_surface('-z', origin=z_max).clip_closed_surface('z', origin=z_min)
+        # height[2] = mesh.clip_closed_surface('-z', origin=z_min)
+        height[0] = mesh.clip('z', origin = z_max, invert = False)
+        height[1] = mesh.clip('-z', origin = z_max, invert = False).clip('z', origin = z_min, invert = False)
+        height[2] = mesh.clip('-z', origin = z_min, invert = False)
 
         # spliting the mesh along the y-axis
         for k in range(0,3):
             try:
-                side[0,k] = height[k].clip_closed_surface('y', origin=y_max)
-                side[1,k] = height[k].clip_closed_surface('-y', origin=y_max).clip_closed_surface('y', origin=y_min)
-                side[2,k] = height[k].clip_closed_surface('-y', origin=y_min)
-                # side[0,k] = height[k].clip('y', origin = y_max, invert = False)
-                # side[1,k] = height[k].clip('-y', origin = y_max, invert = False).clip('y', origin = y_min, invert = False)
-                # side[2,k] = height[k].clip('-y', origin = y_min, invert = False)
+                # side[0,k] = height[k].clip_closed_surface('y', origin=y_max)
+                # side[1,k] = height[k].clip_closed_surface('-y', origin=y_max).clip_closed_surface('y', origin=y_min)
+                # side[2,k] = height[k].clip_closed_surface('-y', origin=y_min)
+                side[0,k] = height[k].clip('y', origin = y_max, invert = False)
+                side[1,k] = height[k].clip('-y', origin = y_max, invert = False).clip('y', origin = y_min, invert = False)
+                side[2,k] = height[k].clip('-y', origin = y_min, invert = False)
             except ValueError:
                 pass
 
@@ -566,16 +576,23 @@ class MainWindow(Qt.QMainWindow):
         for j in range(0,3):
             for k in range(0,3):
                 try:
-                    cube[0,j,k] = side[j,k].clip_closed_surface('x', origin=x_max)
-                    # cube[0,j,k] = side[j,k].clip('x', origin = x_max, invert = False)
+                    # cube[0,j,k] = side[j,k].clip_closed_surface('x', origin=x_max)
+                    cube[0,j,k] = side[j,k].clip('x', origin = x_max, invert = False)
                     cube[0,j,k] = cube[0,j,k].split_bodies()
                     
-                    cube[1,j,k] = side[j,k].clip_closed_surface('x', origin=x_min).clip_closed_surface('-x', origin=x_max).clean() # need to test for knight
-                    # cube[1,j,k] = side[j,k].clip('x', origin = x_min, invert = False).clip('-x', origin = x_max, invert = False)
-                    cube[1,j,k] = cube[1,j,k].split_bodies()
+                    # cube[1,j,k] = side[j,k].clip_closed_surface('x', origin=x_min).clip_closed_surface('-x', origin=x_max).clean() # need to test for knight
+                    if (j == 1) and (k == 1):
+                        if (max_cuboid == 0):
+                            cube[1,j,k] = pv.MultiBlock([max_cube.triangulate()])
+                        else:
+                            cube[1,j,k] = pv.MultiBlock([max_cuboid.triangulate()])
+                    else:
+                        cube[1,j,k] = side[j,k].clip('x', origin = x_min, invert = False).clip('-x', origin = x_max, invert = False)
+                        cube[1,j,k] = cube[1,j,k].split_bodies()
+                        
                     
-                    cube[2,j,k] = side[j,k].clip_closed_surface('-x', origin=x_min)
-                    # cube[2,j,k] = side[j,k].clip('-x', origin = x_min, invert = False)
+                    # cube[2,j,k] = side[j,k].clip_closed_surface('-x', origin=x_min)
+                    cube[2,j,k] = side[j,k].clip('-x', origin = x_min, invert = False)
                     cube[2,j,k] = cube[2,j,k].split_bodies()
                 except ValueError:
                     pass
@@ -583,19 +600,32 @@ class MainWindow(Qt.QMainWindow):
         self.plotter.clear()
 
         # partition color choices
-        color = ["r", "cyan", "g", "y"]
+        color = ["brown","g", "y", "r","w","purple","tan", "cyan","grey"]
         ind = -1
+
+        # # display partitions if SizeError is raised
+        # for i in range(0,3):
+        #     for j in range(0,3):
+        #         for k in range(0,3):
+        #             if (cube[i,j,k]!= 0) and (cube[i,j,k].volume != 0):
+        #                 for l in range(0,cube[i,j,k].n_blocks):
+        #                     # rotate the 9 indicating colors
+        #                     if ind == 8:
+        #                         ind = 0
+        #                     else:
+        #                         ind += 1
+        #                     self.plotter.add_mesh(cube[i,j,k][l], show_edges=True, color=color[ind], opacity=1)
 
         # display partitions if SizeError is raised
         for i in range(0,3):
             for j in range(0,3):
                 for k in range(0,3):
-                    # rotate the 4 indicating colors
-                    if ind == 3:
+                    # rotate the 8 indicating colors
+                    if ind == 7:
                         ind = 0
                     else:
                         ind += 1
-                    if cube[i,j,k]!= 0:
+                    if (cube[i,j,k]!= 0) and (cube[i,j,k].volume != 0):
                         self.plotter.add_mesh(cube[i,j,k], show_edges=True, color=color[ind], opacity=1)
 
         # append island partitions to the 26 main partitions
@@ -611,9 +641,6 @@ class MainWindow(Qt.QMainWindow):
 
     def append_island(self, cube):
         ''' appending island partitions to the 26 main partitions '''
-        # clear plotter
-        self.plotter.clear()
-
         # start output text file
         report = open("report.txt","w")
         print("Island partitions:", end = "\n", file = report)
@@ -621,380 +648,283 @@ class MainWindow(Qt.QMainWindow):
         # creating a 3x3x3 matrix representing the 27 regions
         extra = np.zeros((3,3,3), dtype=object)
 
+        # initiate variable
+        island = []
+        island_num = 0
+
         # separate island partitions (extra[i,j,k])
         for i in range(0,3):
             for j in range(0,3):
                 for k in range(0,3):
-                    if cube[i,j,k] != 0:
+                    if (cube[i,j,k] != 0):
                         if cube[i,j,k].n_blocks > 1:
                             cube_num = cube[i,j,k].n_blocks
                             ratio = np.array([])
                             for w in range(1,cube_num):
-                                ratio = np.append(ratio, np.divide(cube[i,j,k][0].volume, cube[i,j,k][w].volume))
+                                # ratio = np.append(ratio, np.divide(cube[i,j,k][0].volume, cube[i,j,k][w].volume))
+                                # size is determined with length of partition bounding box diagonal
+                                ratio = np.append(ratio, np.divide(cube[i,j,k][0].length, cube[i,j,k][w].length))
                             if min(ratio) < 1:
                                 p = np.where(ratio == min(ratio))
                                 p = p[0][0] + 1
                             elif min(ratio) > 1:
                                 p = 0
                             extra[i,j,k] = cube[i,j,k].copy()
-                            cube[i,j,k] = pv.MultiBlock([cube[i,j,k]['Block-0' + str(p)]])
-                            extra[i,j,k].pop(extra[i,j,k].keys()[p])
-                            print("extra[", i, j, k, "][", extra[i,j,k].n_blocks - 1, "]", end = "\n", file = report)
+                            if (cube[i,j,k]['Block-0' + str(p)].length > mesh.length / 1000):
+                                cube[i,j,k] = pv.MultiBlock([cube[i,j,k]['Block-0' + str(p)]])
+                                extra[i,j,k].pop(extra[i,j,k].keys()[p])
+                            else:
+                                cube[i,j,k] = 0
+                            for v in range(0,extra[i,j,k].n_blocks):
+                                island_name = "extra[ " + str(i) + " " + str(j) + " " + str(k) + " ][ " + str(v) + " ]"
+                                print(island_name, end = "\n", file = report)
+                                island = np.append(island, island_name)
+                                island_num += 1
                         else:
                             cube[i,j,k] = pv.MultiBlock([cube[i,j,k]['Block-00']])
                             extra[i,j,k] = pv.MultiBlock()
                     else:
                         extra[i,j,k] = pv.MultiBlock()
-
-        print("\n", file = report)
-        print("Append island partitions to main partitions:", end = "\n", file = report)
-
-        # merge the island partitions (extra[i,j,k]) to main partitions
-        for i in range(0,3):
-            for j in range(0,3):
-                for k in range(0,3):
-                    # extra[i,j,k].clean()
-                    if extra[i,j,k].n_blocks != 0:
-                        extra_num_1 = extra[i,j,k].n_blocks
-                        l = 0
-                        break_outter = False
-                        while l < extra_num_1:
-                            if (i == 0) or (i == 2):
-                                # print(i,j,k, "\n", file = report)
-                                if (cube[1,j,k] != 0) and (extra[i,j,k][l].merge(cube[1,j,k][0]).split_bodies().n_blocks == 1):
-                                    cube[1,j,k].append(extra[i,j,k][l])
-                                    print("cube[", 1, j, k, "][ 0 ] <-- extra[", i, j, k, "][", l ,"]", end = "\n", file = report)
-                                    cube[1,j,k] = pv.MultiBlock([cube[1,j,k].combine()])
-                                    extra[i,j,k][l] = cube[1,j,k][0].copy()
-                                    l += 1
-                                    break
-                                elif extra[1,j,k].n_blocks != 0:
-                                    extra_num_2 = extra[1,j,k].n_blocks
-                                    m = 0
-                                    while m < extra_num_2:
-                                        extra_sum = extra[i,j,k][l].volume + extra[1,j,k][m].volume
-                                        if (extra[i,j,k][l].merge(extra[1,j,k][m]).split_bodies().n_blocks == 1) and (extra_sum >= mesh.volume / 1000):
-                                            if extra[i,j,k][l].volume > extra[1,j,k][m].volume:
-                                                extra[i,j,k][l] = extra[i,j,k][l].merge(extra[1,j,k][m])
-                                                print("extra[", 1, j, k, "][", m ,"] --> extra[", i, j, k, "][", l ,"]", end = "\n", file = report)
-                                                l += 1
-                                                break_outter = True
-                                                break
-                                            else:
-                                                extra[1,j,k][m] = extra[1,j,k][m].merge(extra[i,j,k][l])
-                                                partition = " extra[ " + str(1) + " " + str(j) + " " + str(k) + " ][ " + str(m) + " ]"
-                                                a, b, c = self.search_string_in_file(report, "report.txt", partition)
-                                                report = open("report.txt", "a")
-                                                if a != []:
-                                                    cube[a,b,c].append(extra[1,j,k][m])
-                                                    cube[a,b,c] = pv.MultiBlock([cube[a,b,c].combine()])
-                                                print("extra[", 1, j, k, "][", m ,"] <-- extra[", i, j, k, "][", l ,"]", end = "\n", file = report)
-                                                l += 1
-                                                break_outter = True
-                                                break
-                                        else:
-                                            m += 1
-                                    if break_outter == True:
-                                        break
-                            elif i == 1:
-                                # print(i,j,k, "\n", file = report)
-                                if (cube[0,j,k] != 0) and (extra[i,j,k][l].merge(cube[0,j,k][0]).split_bodies().n_blocks == 1):
-                                    cube[0,j,k].append(extra[i,j,k][l])
-                                    print("cube[", 0, j, k, "][ 0 ] <-- extra[", i, j, k, "][", l ,"]", end = "\n", file = report)
-                                    cube[0,j,k] = pv.MultiBlock([cube[0,j,k].combine()])
-                                    extra[i,j,k][l] = cube[0,j,k][0].copy()
-                                    l += 1
-                                    break
-                                elif extra[0,j,k].n_blocks != 0:
-                                    extra_num_2 = extra[0,j,k].n_blocks
-                                    m = 0
-                                    while m < extra_num_2:
-                                        extra_sum = extra[i,j,k][l].volume + extra[0,j,k][m].volume
-                                        if (extra[i,j,k][l].merge(extra[0,j,k][m]).split_bodies().n_blocks == 1) and (extra_sum >= mesh.volume / 1000):
-                                            if extra[i,j,k][l].volume > extra[0,j,k][m].volume:
-                                                extra[i,j,k][l] = extra[i,j,k][l].merge(extra[0,j,k][m])
-                                                print("extra[", 0, j, k, "][", m ,"] --> extra[", i, j, k, "][", l ,"]", end = "\n", file = report)
-                                                l += 1
-                                                break_outter = True
-                                                break
-                                            else:
-                                                extra[0,j,k][m] = extra[0,j,k][m].merge(extra[i,j,k][l])
-                                                partition = " extra[ " + str(0) + " " + str(j) + " " + str(k) + " ][ " + str(m) + " ]"
-                                                a, b, c = self.search_string_in_file(report, "report.txt", partition)
-                                                report = open("report.txt", "a")
-                                                if a != []:
-                                                    cube[a,b,c].append(extra[0,j,k][m])
-                                                    cube[a,b,c] = pv.MultiBlock([cube[a,b,c].combine()])
-                                                print("extra[", 0, j, k, "][", m ,"] <-- extra[", i, j, k, "][", l ,"]", end = "\n", file = report)
-                                                l += 1
-                                                break_outter = True
-                                                break
-                                        else:
-                                            m += 1
-                                    if break_outter == True:
-                                        break
-                                elif (cube[2,j,k] != 0) and (extra[i,j,k][l].merge(cube[2,j,k][0]).split_bodies().n_blocks == 1):
-                                    cube[2,j,k].append(extra[i,j,k][l])
-                                    print("cube[", 2, j, k, "][ 0 ] <-- extra[", i, j, k, "][", l ,"]", end = "\n", file = report)
-                                    cube[2,j,k] = pv.MultiBlock([cube[2,j,k].combine()])
-                                    extra[i,j,k][l] = cube[2,j,k][0].copy()
-                                    l += 1
-                                    break
-                                elif extra[2,j,k].n_blocks != 0:
-                                    extra_num_2 = extra[2,j,k].n_blocks
-                                    m = 0
-                                    while m < extra_num_2:
-                                        extra_sum = extra[i,j,k][l].volume + extra[2,j,k][m].volume
-                                        if (extra[i,j,k][l].merge(extra[2,j,k][m]).split_bodies().n_blocks == 1) and (extra_sum >= mesh.volume / 1000):
-                                            if extra[i,j,k][l].volume > extra[2,j,k][m].volume:
-                                                extra[i,j,k][l] = extra[i,j,k][l].merge(extra[2,j,k][m])
-                                                print("extra[", 2, j, k, "][", m ,"] --> extra[", i, j, k, "][", l ,"]", end = "\n", file = report)
-                                                l += 1
-                                                break_outter = True
-                                                break
-                                            else:
-                                                extra[2,j,k][m] = extra[2,j,k][m].merge(extra[i,j,k][l])
-                                                partition = " extra[ " + str(2) + " " + str(j) + " " + str(k) + " ][ " + str(m) + " ]"
-                                                a, b, c = self.search_string_in_file(report, "report.txt", partition)
-                                                report = open("report.txt", "a")
-                                                if a != []:
-                                                    cube[a,b,c].append(extra[2,j,k][m])
-                                                    cube[a,b,c] = pv.MultiBlock([cube[a,b,c].combine()])
-                                                print("extra[", 2, j, k, "][", m ,"] <-- extra[", i, j, k, "][", l ,"]", end = "\n", file = report)
-                                                l += 1
-                                                break_outter = True
-                                                break
-                                        else:
-                                            m += 1
-                                    if break_outter == True:
-                                        break
-
-                            if (j == 0) or (j == 2):
-                                # print(i,j,k, "\n", file = report) 
-                                if (cube[i,1,k] != 0) and (extra[i,j,k][l].merge(cube[i,1,k][0]).split_bodies().n_blocks == 1):
-                                    cube[i,1,k].append(extra[i,j,k][l])
-                                    print("cube[", i, 1, k, "][ 0 ] <-- extra[", i, j, k, "][", l ,"]", end = "\n", file = report)
-                                    cube[i,1,k] = pv.MultiBlock([cube[i,1,k].combine()])
-                                    extra[i,j,k][l] = cube[i,1,k][0].copy()
-                                    l += 1
-                                    break
-                                elif extra[i,1,k].n_blocks != 0:
-                                    extra_num_2 = extra[i,1,k].n_blocks
-                                    m = 0
-                                    while m < extra_num_2:
-                                        extra_sum = extra[i,j,k][l].volume + extra[i,1,k][m].volume
-                                        if (extra[i,j,k][l].merge(extra[i,1,k][m]).split_bodies().n_blocks == 1) and (extra_sum >= mesh.volume / 1000):
-                                            if extra[i,j,k][l].volume > extra[i,1,k][m].volume:
-                                                extra[i,j,k][l] = extra[i,j,k][l].merge(extra[i,1,k][m])
-                                                print("extra[", i, 1, k, "][", m ,"] --> extra[", i, j, k, "][", l ,"]", end = "\n", file = report)
-                                                l += 1
-                                                break_outter = True
-                                                break
-                                            else:
-                                                extra[i,1,k][m] = extra[i,1,k][m].merge(extra[i,j,k][l])
-                                                partition = " extra[ " + str(i) + " " + str(1) + " " + str(k) + " ][ " + str(m) + " ]"
-                                                a, b, c = self.search_string_in_file(report, "report.txt", partition)
-                                                report = open("report.txt", "a")
-                                                if a != []:
-                                                    cube[a,b,c].append(extra[i,1,k][m])
-                                                    cube[a,b,c] = pv.MultiBlock([cube[a,b,c].combine()])
-                                                print("extra[", i, 1, k, "][", m ,"] <-- extra[", i, j, k, "][", l ,"]", end = "\n", file = report)
-                                                l += 1
-                                                break_outter = True
-                                                break
-                                        else:
-                                            m += 1
-                                    if break_outter == True:
-                                        break
-                            elif j == 1:
-                                # print(i,j,k, "\n", file = report)
-                                if (cube[i,0,k] != 0) and (extra[i,j,k][l].merge(cube[i,0,k][0]).split_bodies().n_blocks == 1):
-                                    cube[i,0,k].append(extra[i,j,k][l])
-                                    print("cube[", i, 0, k, "][ 0 ] <-- extra[", i, j, k, "][", l ,"]", end = "\n", file = report)
-                                    cube[i,0,k] = pv.MultiBlock([cube[i,0,k].combine()])
-                                    extra[i,j,k][l] = cube[i,0,k][0].copy()
-                                    l += 1
-                                    break
-                                elif extra[i,0,k].n_blocks != 0:
-                                    extra_num_2 = extra[i,0,k].n_blocks
-                                    m = 0
-                                    while m < extra_num_2:
-                                        extra_sum = extra[i,j,k][l].volume + extra[i,0,k][m].volume
-                                        if (extra[i,j,k][l].merge(extra[i,0,k][m]).split_bodies().n_blocks == 1) and (extra_sum >= mesh.volume / 1000):
-                                            if extra[i,j,k][l].volume > extra[i,0,k][m].volume:
-                                                extra[i,j,k][l] = extra[i,j,k][l].merge(extra[i,0,k][m])
-                                                print("extra[", i, 0, k, "][", m ,"] --> extra[", i, j, k, "][", l ,"]", end = "\n", file = report)
-                                                l += 1
-                                                break_outter = True
-                                                break
-                                            else:
-                                                extra[i,0,k][m] = extra[i,0,k][m].merge(extra[i,j,k][l])
-                                                partition = " extra[ " + str(i) + " " + str(0) + " " + str(k) + " ][ " + str(m) + " ]"
-                                                a, b, c = self.search_string_in_file(report, "report.txt", partition)
-                                                report = open("report.txt", "a")
-                                                if a != []:
-                                                    cube[a,b,c].append(extra[i,0,k][m])
-                                                    cube[a,b,c] = pv.MultiBlock([cube[a,b,c].combine()])
-                                                print("extra[", i, 0, k, "][", m ,"] <-- extra[", i, j, k, "][", l ,"]", end = "\n", file = report)
-                                                l += 1
-                                                break_outter = True
-                                                break
-                                        else:
-                                            m += 1
-                                    if break_outter == True:
-                                        break
-                                elif (cube[i,2,k] != 0) and (extra[i,j,k][l].merge(cube[i,2,k][0]).split_bodies().n_blocks == 1):
-                                    cube[i,2,k].append(extra[i,j,k][l])
-                                    print("cube[", i, 2, k, "][ 0 ] <-- extra[", i, j, k, "][", l ,"]", end = "\n", file = report)
-                                    cube[i,2,k] = pv.MultiBlock([cube[i,2,k].combine()])
-                                    extra[i,j,k][l] = cube[i,2,k][0].copy()
-                                    l += 1
-                                    break
-                                elif extra[i,2,k].n_blocks != 0:
-                                    extra_num_2 = extra[i,2,k].n_blocks
-                                    m = 0
-                                    while m < extra_num_2:
-                                        extra_sum = extra[i,j,k][l].volume + extra[i,2,k][m].volume
-                                        if (extra[i,j,k][l].merge(extra[i,2,k][m]).split_bodies().n_blocks == 1) and (extra_sum >= mesh.volume / 1000):
-                                            if extra[i,j,k][l].volume > extra[i,2,k][m].volume:
-                                                extra[i,j,k][l] = extra[i,j,k][l].merge(extra[i,2,k][m])
-                                                print("extra[", i, 2, k, "][", m ,"] --> extra[", i, j, k, "][", l ,"]", end = "\n", file = report)
-                                                l += 1
-                                                break_outter = True
-                                                break
-                                            else:
-                                                extra[i,2,k][m] = extra[i,2,k][m].merge(extra[i,j,k][l])
-                                                partition = " extra[ " + str(i) + " " + str(2) + " " + str(k) + " ][ " + str(m) + " ]"
-                                                a, b, c = self.search_string_in_file(report, "report.txt", partition)
-                                                report = open("report.txt", "a")
-                                                if a != []:
-                                                    cube[a,b,c].append(extra[i,2,k][m])
-                                                    cube[a,b,c] = pv.MultiBlock([cube[a,b,c].combine()])
-                                                print("extra[", i, 2, k, "][", m ,"] <-- extra[", i, j, k, "][", l ,"]", end = "\n", file = report)
-                                                l += 1
-                                                break_outter = True
-                                                break
-                                        else:
-                                            m += 1
-                                    if break_outter == True:
-                                        break
-
-                            if (k == 0) or (k == 2):
-                                # print(i,j,k, "\n", file = report)
-                                if (cube[i,j,1] != 0) and (extra[i,j,k][l].merge(cube[i,j,1][0]).split_bodies().n_blocks == 1):
-                                    cube[i,j,1].append(extra[i,j,k][l])
-                                    print("cube[", i, j, 1, "][ 0 ] <-- extra[", i, j, k, "][", l ,"]", end = "\n", file = report)
-                                    cube[i,j,1] = pv.MultiBlock([cube[i,j,1].combine()])
-                                    extra[i,j,k][l] = cube[i,j,1][0].copy()
-                                    # print(extra[i,j,k][l])
-                                    l += 1
-                                    break
-                                elif extra[i,j,1].n_blocks != 0:
-                                    extra_num_2 = extra[i,j,1].n_blocks
-                                    m = 0
-                                    while m < extra_num_2:
-                                        extra_sum = extra[i,j,k][l].volume + extra[i,j,1][m].volume
-                                        if (extra[i,j,k][l].merge(extra[i,j,1][m]).split_bodies().n_blocks == 1) and (extra_sum >= mesh.volume / 1000):
-                                            if extra[i,j,k][l].volume > extra[i,j,1][m].volume:
-                                                extra[i,j,k][l] = extra[i,j,k][l].merge(extra[i,j,1][m])
-                                                print("extra[", i, j, 1, "][", m ,"] --> extra[", i, j, k, "][", l ,"]", end = "\n", file = report)
-                                                l += 1
-                                                break_outter = True
-                                                break
-                                            else:
-                                                extra[i,j,1][l] = extra[i,j,1][l].merge(extra[i,j,k][l])
-                                                partition = " extra[ " + str(i) + " " + str(j) + " " + str(1) + " ][ " + str(m) + " ]"
-                                                a, b, c = self.search_string_in_file(report, "report.txt", partition)
-                                                report = open("report.txt", "a")
-                                                if a != []:
-                                                    cube[a,b,c].append(extra[i,j,1][m])
-                                                    cube[a,b,c] = pv.MultiBlock([cube[a,b,c].combine()])
-                                                print("extra[", i, j, 1, "][", m ,"] <-- extra[", i, j, k, "][", l ,"]", end = "\n", file = report)
-                                                l += 1
-                                                break_outter = True
-                                                break
-                                        else:
-                                            m += 1
-                                    if break_outter == True:
-                                        break
-                            elif k == 1:
-                                # print(i,j,k, "\n", file = report)
-                                if (cube[i,j,0] != 0 ) and (extra[i,j,k][l].merge(cube[i,j,0][0]).split_bodies().n_blocks == 1):
-                                    cube[i,j,0].append(extra[i,j,k][l])
-                                    print("cube[", i, j, 0, "][ 0 ] <-- extra[", i, j, k, "][", l ,"]", end = "\n", file = report)
-                                    cube[i,j,0] = pv.MultiBlock([cube[i,j,0].combine()])
-                                    extra[i,j,k][l] = cube[i,j,0][0].copy()
-                                    l += 1
-                                    break
-                                elif extra[i,j,0].n_blocks != 0:
-                                    extra_num_2 = extra[i,j,0].n_blocks
-                                    m = 0
-                                    while m < extra_num_2:
-                                        extra_sum = extra[i,j,k][l].volume + extra[i,j,0][m].volume
-                                        if (extra[i,j,k][l].merge(extra[i,j,0][m]).split_bodies().n_blocks == 1) and (extra_sum >= mesh.volume / 1000):
-                                            if extra[i,j,k][l].volume > extra[i,j,0][m].volume:
-                                                extra[i,j,k][l] = extra[i,j,k][l].merge(extra[i,j,0][m])
-                                                print("extra[", i, j, 0, "][", m ,"] --> extra[", i, j, k, "][", l ,"]", end = "\n", file = report)
-                                                l += 1
-                                                break_outter = True
-                                                break
-                                            else:
-                                                extra[i,j,0][m] = extra[i,j,0][m].merge(extra[i,j,k][l])
-                                                partition = " extra[ " + str(i) + " " + str(j) + " " + str(0) + " ][ " + str(m) + " ]"
-                                                a, b, c = self.search_string_in_file(report, "report.txt", partition)
-                                                report = open("report.txt", "a")
-                                                if a != []:
-                                                    cube[a,b,c].append(extra[i,j,0][m])
-                                                    cube[a,b,c] = pv.MultiBlock([cube[a,b,c].combine()])
-                                                print("extra[", i, j, 0, "][", m ,"] <-- extra[", i, j, k, "][", l ,"]", end = "\n", file = report)
-                                                l += 1
-                                                break_outter = True
-                                                break
-                                        else:
-                                            m += 1
-                                    if break_outter == True:
-                                        break
-                                elif (cube[i,j,2] != 0) and (extra[i,j,k][l].merge(cube[i,j,2][0]).split_bodies().n_blocks == 1):
-                                    cube[i,j,2].append(extra[i,j,k][l])
-                                    print("cube[", i, j, 2, "][ 0 ] <-- extra[", i, j, k, "][", l ,"]", end = "\n", file = report)
-                                    cube[i,j,2] = pv.MultiBlock([cube[i,j,2].combine()])
-                                    extra[i,j,k][l] = cube[i,j,2][0].copy()
-                                    l += 1
-                                    break
-                                elif extra[i,j,2].n_blocks != 0:
-                                    extra_num_2 = extra[i,j,2].n_blocks
-                                    m = 0
-                                    while m < extra_num_2:
-                                        extra_sum = extra[i,j,k][l].volume + extra[i,j,2][m].volume
-                                        if (extra[i,j,k][l].merge(extra[i,j,2][m]).split_bodies().n_blocks == 1) and (extra_sum >= mesh.volume / 1000):
-                                            if extra[i,j,k][l].volume > extra[i,j,2][m].volume:
-                                                extra[i,j,k][l] = extra[i,j,k][l].merge(extra[i,j,2][m])
-                                                print("extra[", i, j, 2, "][", m ,"] --> extra[", i, j, k, "][", l ,"]", end = "\n", file = report)
-                                                l += 1
-                                                break_outter = True
-                                                break
-                                            else:
-                                                extra[i,j,2][m] = extra[i,j,2][m].merge(extra[i,j,k][l])
-                                                partition = " extra[ " + str(i) + " " + str(j) + " " + str(2) + " ][ " + str(m) + " ]"
-                                                a, b, c = self.search_string_in_file(report, "report.txt", partition)
-                                                report = open("report.txt", "a")
-                                                if a != []:
-                                                    cube[a,b,c].append(extra[i,j,2][m])
-                                                    cube[a,b,c] = pv.MultiBlock([cube[a,b,c].combine()])
-                                                print("extra[", i, j, 2, "][", m ,"] <-- extra[", i, j, k, "][", l ,"]", end = "\n", file = report)
-                                                l += 1
-                                                break_outter = True
-                                                break
-                                        else:
-                                            m += 1
-                                    if break_outter == True:
-                                        break
         
+        print("Island Partitions:", island_num, end = "\n", file = report)
+        print("\n", file = report)
+        print("Append island partitions to major partitions:", end = "\n", file = report)
+
+        # initiate variables
+        exclude = ["cube[ 1 1 1 ][ 0 ]"]
+
+        # merge the island partitions with neighboring major/island partitions
+        # self.plotter.clear()
+        for v in range(0,island_num):
+            # set indicies
+            i = int(island[v][7])
+            j = int(island[v][9])
+            k = int(island[v][11])
+            l = int(island[v][16])
+
+            # initiate variables
+            i_pair = np.array([], dtype = object)
+            i_pair_dialen = np.array([], dtype = object)
+            i_append = np.array([], dtype = object)
+            j_pair = np.array([], dtype = object)
+            j_pair_dialen = np.array([], dtype = object)
+            j_append = np.array([], dtype = object)
+            k_pair = np.array([], dtype = object)
+            k_pair_dialen = np.array([], dtype = object)
+            k_append = np.array([], dtype = object)
+            discard = []
+            rslt_num = 0
+
+            if (i == 0) or (i == 2):
+                if (cube[1,j,k] != 0) and (extra[i,j,k][l].merge(cube[1,j,k][0]).split_bodies().n_blocks == 1) and \
+                (self.fit_check(extra[i,j,k][l].merge(cube[1,j,k][0])) == True):
+                    i_pair = np.append(i_pair, [extra[i,j,k][l].merge(cube[1,j,k][0])])
+                    i_pair_dialen = np.append(i_pair_dialen, [i_pair[len(i_pair)-1].length])
+                    i_append = np.append(i_append, "cube[ 1 "+ str(j) + " " + str(k) + " ][ 0 ]")
+                if extra[1,j,k].n_blocks != 0:
+                    extra_num_2 = extra[1,j,k].n_blocks
+                    for m in range(0,extra_num_2):
+                        if (extra[1,j,k][m].length != 0) and (extra[i,j,k][l].merge(extra[1,j,k][m]).split_bodies().n_blocks == 1) and \
+                        (self.fit_check(extra[i,j,k][l].merge(extra[1,j,k][m])) == True):
+                            i_pair = np.append(i_pair, [extra[i,j,k][l].merge(extra[1,j,k][m])])
+                            i_pair_dialen = np.append(i_pair_dialen, [i_pair[len(i_pair)-1].length])
+                            i_append = np.append(i_append, "extra[ 1 "+ str(j) + " " + str(k) + " ][ " + str(m) + " ]")
+            elif i == 1:
+                if (cube[0,j,k] != 0) and (extra[i,j,k][l].merge(cube[0,j,k][0]).split_bodies().n_blocks == 1) and \
+                (self.fit_check(extra[i,j,k][l].merge(cube[0,j,k][0])) == True):
+                    i_pair = np.append(i_pair, [extra[i,j,k][l].merge(cube[0,j,k][0])])
+                    i_pair_dialen = np.append(i_pair_dialen, [i_pair[len(i_pair)-1].length])
+                    i_append = np.append(i_append, "cube[ 0 "+ str(j) + " " + str(k) + " ][ 0 ]")
+                if extra[0,j,k].n_blocks != 0:
+                    extra_num_2 = extra[0,j,k].n_blocks
+                    for m in range(0,extra_num_2):
+                        if (extra[0,j,k][m].length != 0) and (extra[i,j,k][l].merge(extra[0,j,k][m]).split_bodies().n_blocks == 1) and \
+                        (self.fit_check(extra[i,j,k][l].merge(extra[0,j,k][m])) == True):
+                            i_pair = np.append(i_pair, [extra[i,j,k][l].merge(extra[0,j,k][m])])
+                            i_pair_dialen = np.append(i_pair_dialen, [i_pair[len(i_pair)-1].length])
+                            i_append = np.append(i_append, "extra[ 0 "+ str(j) + " " + str(k) + " ][ " + str(m) + " ]")
+                if (cube[2,j,k] != 0) and (extra[i,j,k][l].merge(cube[2,j,k][0]).split_bodies().n_blocks == 1) and \
+                (self.fit_check(extra[i,j,k][l].merge(cube[2,j,k][0])) == True):
+                    i_pair = np.append(i_pair, [extra[i,j,k][l].merge(cube[2,j,k][0])])
+                    i_pair_dialen = np.append(i_pair_dialen, [i_pair[len(i_pair)-1].length])
+                    i_append = np.append(i_append, "cube[ 2 "+ str(j) + " " + str(k) + " ][ 0 ]")
+                if extra[2,j,k].n_blocks != 0:
+                    extra_num_2 = extra[2,j,k].n_blocks
+                    for m in range(0,extra_num_2):
+                        if (extra[2,j,k][m].length != 0) and (extra[i,j,k][l].merge(extra[2,j,k][m]).split_bodies().n_blocks == 1) and \
+                        (self.fit_check(extra[i,j,k][l].merge(extra[2,j,k][m])) == True):
+                            i_pair = np.append(i_pair, [extra[i,j,k][l].merge(extra[2,j,k][m])])
+                            i_pair_dialen = np.append(i_pair_dialen, [i_pair[len(i_pair)-1].length])
+                            i_append = np.append(i_append, "extra[ 2 "+ str(j) + " " + str(k) + " ][ " + str(m) + " ]")
+
+            if (j == 0) or (j == 2):
+                if (cube[i,1,k] != 0) and (extra[i,j,k][l].merge(cube[i,1,k][0]).split_bodies().n_blocks == 1) and \
+                (self.fit_check(extra[i,j,k][l].merge(cube[i,1,k][0])) == True):
+                    j_pair = np.append(j_pair, [extra[i,j,k][l].merge(cube[i,1,k][0])])
+                    j_pair_dialen = np.append(j_pair_dialen, [j_pair[len(j_pair)-1].length])
+                    j_append = np.append(j_append, "cube[ " + str(i) + " 1 " + str(k) + " ][ 0 ]")
+                if extra[i,1,k].n_blocks != 0:
+                    extra_num_2 = extra[i,1,k].n_blocks
+                    for m in range(0,extra_num_2):
+                        if (extra[i,1,k][m].length != 0) and (extra[i,j,k][l].merge(extra[i,1,k][m]).split_bodies().n_blocks == 1) and \
+                        (self.fit_check(extra[i,j,k][l].merge(extra[i,1,k][m])) == True):
+                            j_pair = np.append(j_pair, [extra[i,j,k][l].merge(extra[i,1,k][m])])
+                            j_pair_dialen = np.append(j_pair_dialen, [j_pair[len(j_pair)-1].length])
+                            j_append = np.append(j_append, "extra[ " + str(i) + " 1 " + str(k) + " ][ " + str(m) + " ]")
+            elif j == 1:
+                if (cube[i,0,k] != 0) and (extra[i,j,k][l].merge(cube[i,0,k][0]).split_bodies().n_blocks == 1) and \
+                (self.fit_check(extra[i,j,k][l].merge(cube[i,0,k][0])) == True):
+                    j_pair = np.append(j_pair, [extra[i,j,k][l].merge(cube[i,0,k][0])])
+                    j_pair_dialen = np.append(j_pair_dialen, [j_pair[len(j_pair)-1].length])
+                    j_append = np.append(j_append, "cube[ " + str(i) + " 0 " + str(k) + " ][ 0 ]")
+                if extra[i,0,k].n_blocks != 0:
+                    extra_num_2 = extra[i,0,k].n_blocks
+                    for m in range(0,extra_num_2):
+                        if (extra[i,0,k][m].length != 0) and (extra[i,j,k][l].merge(extra[i,0,k][m]).split_bodies().n_blocks == 1) and \
+                        (self.fit_check(extra[i,j,k][l].merge(extra[i,0,k][m])) == True):
+                            j_pair = np.append(j_pair, [extra[i,j,k][l].merge(extra[i,0,k][m])])
+                            j_pair_dialen = np.append(j_pair_dialen, [j_pair[len(j_pair)-1].length])
+                            j_append = np.append(j_append, "extra[ " + str(i) + " 0 " + str(k) + " ][ " + str(m) + " ]")
+                if (cube[i,2,k] != 0) and (extra[i,j,k][l].merge(cube[i,2,k][0]).split_bodies().n_blocks == 1) and \
+                (self.fit_check(extra[i,j,k][l].merge(cube[i,2,k][0])) == True):
+                    j_pair = np.append(j_pair, [extra[i,j,k][l].merge(cube[i,2,k][0])])
+                    j_pair_dialen = np.append(j_pair_dialen, [j_pair[len(j_pair)-1].length])
+                    j_append = np.append(j_append, "cube[ " + str(i) + " 2 " + str(k) + " ][ 0 ]")
+                if extra[i,2,k].n_blocks != 0:
+                    extra_num_2 = extra[i,2,k].n_blocks
+                    for m in range(0,extra_num_2):
+                        if (extra[i,2,k][m].length != 0) and (extra[i,j,k][l].merge(extra[i,2,k][m]).split_bodies().n_blocks == 1) and \
+                        (self.fit_check(extra[i,j,k][l].merge(extra[i,2,k][m])) == True):
+                            j_pair = np.append(j_pair, [extra[i,j,k][l].merge(extra[i,2,k][m])])
+                            j_pair_dialen = np.append(j_pair_dialen, [j_pair[len(j_pair)-1].length])
+                            j_append = np.append(j_append, "extra[ " + str(i) + " 2 " + str(k) + " ][ " + str(m) + " ]")
+
+            if (k == 0) or (k == 2):
+                if (cube[i,j,1] != 0) and (extra[i,j,k][l].merge(cube[i,j,1][0]).split_bodies().n_blocks == 1) and \
+                (self.fit_check(extra[i,j,k][l].merge(cube[i,j,1][0])) == True):
+                    k_pair = np.append(k_pair, [extra[i,j,k][l].merge(cube[i,j,1][0])])
+                    k_pair_dialen = np.append(k_pair_dialen, [k_pair[len(k_pair)-1].length])
+                    k_append = np.append(k_append, "cube[ " + str(i) + " " + str(j) + " 1 ][ 0 ]")
+                if extra[i,j,1].n_blocks != 0:
+                    extra_num_2 = extra[i,j,1].n_blocks
+                    for m in range(0,extra_num_2):
+                        if (extra[i,j,1][m].length != 0) and (extra[i,j,k][l].merge(extra[i,j,1][m]).split_bodies().n_blocks == 1) and \
+                        (self.fit_check(extra[i,j,k][l].merge(extra[i,j,1][m])) == True):
+                            k_pair = np.append(k_pair, [extra[i,j,k][l].merge(extra[i,j,1][m])])
+                            k_pair_dialen = np.append(k_pair_dialen, [k_pair[len(k_pair)-1].length])
+                            k_append = np.append(k_append, "extra[ " + str(i) + " " + str(j) + " 1 ][ " + str(m) + " ]")
+            elif k == 1:
+                if (cube[i,j,0] != 0 ) and (extra[i,j,k][l].merge(cube[i,j,0][0]).split_bodies().n_blocks == 1) and \
+                (self.fit_check(extra[i,j,k][l].merge(cube[i,j,0][0])) == True):
+                    k_pair = np.append(k_pair, [extra[i,j,k][l].merge(cube[i,j,0][0])])
+                    k_pair_dialen = np.append(k_pair_dialen, [k_pair[len(k_pair)-1].length])
+                    k_append = np.append(k_append, "cube[ " + str(i) + " " + str(j) + " 0 ][ 0 ]")
+                if extra[i,j,0].n_blocks != 0:
+                    extra_num_2 = extra[i,j,0].n_blocks
+                    for m in range(0,extra_num_2):
+                        if (extra[i,j,0][m].length != 0) and (extra[i,j,k][l].merge(extra[i,j,0][m]).split_bodies().n_blocks == 1) and \
+                        (self.fit_check(extra[i,j,k][l].merge(extra[i,j,0][m])) == True):
+                            k_pair = np.append(k_pair, [extra[i,j,k][l].merge(extra[i,j,0][m])])
+                            k_pair_dialen = np.append(k_pair_dialen, [k_pair[len(k_pair)-1].length])
+                            k_append = np.append(k_append, "extra[ " + str(i) + " " + str(j) + " 0 ][ " + str(m) + " ]")
+                if (cube[i,j,2] != 0) and (extra[i,j,k][l].merge(cube[i,j,2][0]).split_bodies().n_blocks == 1) and \
+                (self.fit_check(extra[i,j,k][l].merge(cube[i,j,2][0])) == True):
+                    k_pair = np.append(k_pair, [extra[i,j,k][l].merge(cube[i,j,2][0])])
+                    k_pair_dialen = np.append(k_pair_dialen, [k_pair[len(k_pair)-1].length])
+                    k_append = np.append(k_append, "cube[ " + str(i) + " " + str(j) + " 2 ][ 0 ]")
+                if extra[i,j,2].n_blocks != 0:
+                    extra_num_2 = extra[i,j,2].n_blocks
+                    for m in range(0,extra_num_2):
+                        if (extra[i,j,2][m].length != 0) and (extra[i,j,k][l].merge(extra[i,j,2][m]).split_bodies().n_blocks == 1) and \
+                        (self.fit_check(extra[i,j,k][l].merge(extra[i,j,2][m])) == True):
+                            k_pair = np.append(k_pair, [extra[i,j,k][l].merge(extra[i,j,2][m])])
+                            k_pair_dialen = np.append(k_pair_dialen, [k_pair[len(k_pair)-1].length])
+                            k_append = np.append(k_append, "extra[ " + str(i) + " " + str(j) + " 2 ][ " + str(m) + " ]")
+                
+            # group all possible pairs info into pair_option, append_option, and pair_dialen
+            pair_option = np.append(np.append(i_pair, j_pair), k_pair)
+            pair_dialen = np.append(np.append(i_pair_dialen, j_pair_dialen), k_pair_dialen)
+            append_option = np.append(np.append(i_append, j_append), k_append)
+            # print("i_append:", i_append)
+            # print("j_append:", j_append)
+            # print("k_append:", k_append)
+            print("Append Options:", append_option)
+            
+            # post-process option lists
+            # indicate options to exclude: center cube/cuboid and self
+            exclude.append("extra[ " + str(i) + " " + str(j) + " " + str(k) + " ][ " + str(l) + " ]")
+            for n in range(0, len(append_option)):
+                for m in range(0, len(exclude)):
+                    if (exclude[m] == append_option[n]):
+                        discard.append(n)
+            # remove options to exclude: center cube/cuboid and self
+            if (discard != None):
+                pair_option = np.delete(pair_option, discard)
+                append_option = np.delete(append_option, discard, 0)
+                pair_dialen = np.delete(pair_dialen, discard)
+
+            # select smallest pair option
+            if pair_dialen.size != 0:
+                min_pair_dialen = min(pair_dialen)
+            else:
+                min_pair_dialen = 0
+
+            # execute island-appending
+            if min_pair_dialen != 0:
+                # find index of the pair option that has smallest bounding box diagonal length
+                x = np.where(pair_dialen == min_pair_dialen)
+                x = x[0][0]
+                # record the island-appending step in report.txt
+                print(append_option[x],"<-- extra[", i, j, k, "][", l, "]", end = "\n", file = report)
+                # assign optimal pair data to the joined-to partition & delete info from the joined-from partition
+                # extra[i,j,k][l] = pv.UnstructuredGrid()
+                if (append_option[x][0] == "e"):
+                    extra[int(append_option[x][7]), int(append_option[x][9]), int(append_option[x][11])][int(append_option[x][16])] = pair_option[x]
+                else:
+                    cube[int(append_option[x][6]), int(append_option[x][8]), int(append_option[x][10])][0] = pair_option[x]
+                # self.plotter.add_mesh(pair_option[x], show_edges=True, color="purple", opacity=1)
+                
         # close report.txt
         report.close()
 
         # keeping variable name uniformity
         appened_cube = cube.copy()
+
+        # # empty the output folder
+        # files = glob.glob('output/*.STL')
+        # for f in files:
+        #     os.remove(f)
+        
+        # # section color choices
+        # color = ["r", "cyan", "g", "y"]
+        # ind = -1
+
+        # # clear plotter
+        # self.plotter.clear()
+
+        # # display sections
+        # for i in range(0,3):
+        #     for j in range(0,3):
+        #         for k in range(0,3):
+        #             # rotate the 4 indicating colors
+        #             if ind == 3:
+        #                 ind = 0
+        #             else:
+        #                 ind += 1
+        #             if cube[i,j,k] != 0:
+        #                 # if (i == 1) and (j == 0) and (k == 2):
+        #                 #     normals = pv.PolyData(cube[i,j,k][0].points, cube[i,j,k][0].cells).cell_normals
+        #                 #     print(normals)
+        #                 #     cells = cube[i,j,k][0].cells
+        #                 #     cells = np.reshape(cells, (int((len(cells)+1)/4), 4))
+        #                 #     print(cells)
+        #                 #     self.plotter.add_mesh(cube[i,j,k], show_edges=True, color=color[ind], opacity=1)
+        #                 # else:
+        #                 #     self.plotter.add_mesh(cube[i,j,k], show_edges=True, color=color[ind], opacity=1)
+        #                 self.plotter.add_mesh(cube[i,j,k], show_edges=True, color=color[ind], opacity=1)
+        #                 # save combined partitions
+        #                 file_name = "section [" + str(i) + "," + str(j) + "," + str(k) +"].STL"
+        #                 pv.save_meshio("output/"+ file_name, cube[i,j,k][0])
 
         return appened_cube
 
@@ -1021,25 +951,13 @@ class MainWindow(Qt.QMainWindow):
             if (break_i == True):
                 break
 
-        # partition color choices
-        # color = ["r", "b", "g", "y", "cyan"]
-        # ind = -1
-
-        # display partitions if SizeError is raised
-        if (size_error == True):
-            for i in range(0,3):
-                for j in range(0,3):
-                    for k in range(0,3):
-                        # # rotate the 5 indicating colors
-                        # if ind == 4:
-                        #     ind = 0
-                        # else:
-                        #     ind += 1
-                        if cube[i,j,k]!= 0:
-                        # if extra[i,j,k].n_blocks!= 0:
-                            self.plotter.add_mesh(cube[i,j,k], show_edges=True, color="r", opacity=0.4)
-                            # self.plotter.add_mesh(cube[i,j,k], show_edges=True, color=color[ind], opacity=0.4)
-                            # self.plotter.add_mesh(extra[i,j,k], show_edges=True, color=color[ind], opacity=0.4)
+        # # display partitions if SizeError is raised
+        # if (size_error == True):
+        #     for i in range(0,3):
+        #         for j in range(0,3):
+        #             for k in range(0,3):
+        #                 if cube[i,j,k]!= 0:
+        #                     self.plotter.add_mesh(cube[i,j,k], show_edges=True, color="r", opacity=0.4)
     
         return size_error
 
@@ -1057,34 +975,34 @@ class MainWindow(Qt.QMainWindow):
                 for q in corner_ind:
                     if (cube[1,p,q] != 0) and (cube[o,p,q][0].merge(cube[1,p,q][0]).split_bodies().n_blocks == 1):
                         o_pair = cube[o,p,q][0].merge(cube[1,p,q][0])
-                        o_pair_vol = o_pair.volume
+                        o_pair_dialen = o_pair.length
                         o_append = [1,p,q]
                     else:
                         o_pair = 0
-                        o_pair_vol = 0
+                        o_pair_dialen = 0
                         o_append = 0
                     if (cube[o,1,q] != 0) and (cube[o,p,q][0].merge(cube[o,1,q][0]).split_bodies().n_blocks == 1):
                         p_pair = cube[o,p,q][0].merge(cube[o,1,q][0])
-                        p_pair_vol = p_pair.volume
+                        p_pair_dialen = p_pair.length
                         p_append = [o,1,q]
                     else:
                         p_pair = 0
-                        p_pair_vol = 0
+                        p_pair_dialen = 0
                         p_append = 0
                     if (cube[o,p,1] != 0) and (cube[o,p,q][0].merge(cube[o,p,1][0]).split_bodies().n_blocks == 1):
                         q_pair = cube[o,p,q][0].merge(cube[o,p,1][0])
-                        q_pair_vol = q_pair.volume
+                        q_pair_dialen = q_pair.length
                         q_append = [o,p,1]
                     else:
                         q_pair = 0
-                        q_pair_vol = 0
+                        q_pair_dialen = 0
                         q_append = 0
                     pair_option = [o_pair, p_pair, q_pair]
                     append_option = [o_append, p_append, q_append]
-                    pair_vol = np.array([o_pair_vol, p_pair_vol, q_pair_vol])
-                    max_pair_vol = max(pair_vol)
-                    if max_pair_vol != 0:
-                        n = np.where(pair_vol == max_pair_vol)
+                    pair_dialen = np.array([o_pair_dialen, p_pair_dialen, q_pair_dialen])
+                    max_pair_dialen = max(pair_dialen)
+                    if max_pair_dialen != 0:
+                        n = np.where(pair_dialen == max_pair_dialen)
                         n = n[0][0]
                         if n == 0:
                             print("cube[", o, p, q, "][ 0 ] <-- cube[", 1, p, q, "][ 0 ]", end = "\n", file = report)
@@ -1114,14 +1032,14 @@ class MainWindow(Qt.QMainWindow):
                         pv.save_meshio("output/"+ file_name, cube[i,j,k][0])
         
     def rank_partitions(self, cube):
-        ''' rank the 3x3x3 matrix of paritions by volume from largest to smallest '''
+        ''' rank the 3x3x3 matrix of paritions by bounding box diagonal length from largest to smallest '''
         # print to report
         report = open("report.txt", "a")
         print("\n", file = report)
         print("Rank partitions:", end = "\n", file = report)
         
         # initiate variables
-        dtype = [('indexes', object), ('volume', float), ('number', int)]
+        dtype = [('indexes', object), ('box dia length', float), ('number', int)]
         ranked_cube = np.zeros(26, dtype=dtype)
         w = -1
 
@@ -1129,15 +1047,17 @@ class MainWindow(Qt.QMainWindow):
             for j in range(0,3):
                 for k in range(0,3):
                     if cube[i,j,k] != 0:
-                        # store partition indices, volume, and number in ranked_cube.
+                        # store partition indices, bounding box diagonal length, and number in ranked_cube.
                         # (center cube is excluded from the ranking process)
                         if (i == 1) and (j == 1) and (k == 1):
                             pass
                         else:
                             w += 1
-                            ranked_cube[w] = ([i,j,k], cube[i,j,k].volume, w)
-        # rank the partition by volume from largest to smallest
-        ranked_cube = np.sort(ranked_cube, order='volume')[::-1]
+                            ranked_cube[w] = ([i,j,k], cube[i,j,k].length, w)
+        # # rank the partition by bounding box diagonal length from largest to smallest
+        # ranked_cube = np.sort(ranked_cube, order='box dia length')[::-1]
+        # rank the partition by bounding box diagonal length from smallest to largest
+        ranked_cube = np.sort(ranked_cube, order='box dia length')
         print(ranked_cube, end = "\n", file = report)
 
         return ranked_cube
@@ -1178,7 +1098,7 @@ class MainWindow(Qt.QMainWindow):
         # check if any of the orientation can fit the partition into print volume
         if (np.sum(ori_check) > 0):
             fit = True
-        
+
         return fit
 
     def combine_pair_partitions(self, cube, ranked_cube):
@@ -1186,6 +1106,7 @@ class MainWindow(Qt.QMainWindow):
         and selecting the pair that fits inside the preset print volume '''
         # initiate variable
         used = [[1,1,1]]
+        rslt_num = 0
 
         # print to report
         report = open("report.txt", "a")
@@ -1200,13 +1121,13 @@ class MainWindow(Qt.QMainWindow):
 
             # initiate variables
             i_pair = np.array([], dtype = object)
-            i_pair_vol = np.array([], dtype = object)
+            i_pair_dialen = np.array([], dtype = object)
             i_append = np.array([], dtype = object)
             j_pair = np.array([], dtype = object)
-            j_pair_vol = np.array([], dtype = object)
+            j_pair_dialen = np.array([], dtype = object)
             j_append = np.array([], dtype = object)
             k_pair = np.array([], dtype = object)
-            k_pair_vol = np.array([], dtype = object)
+            k_pair_dialen = np.array([], dtype = object)
             k_append = np.array([], dtype = object)
             discard = []
 
@@ -1215,60 +1136,60 @@ class MainWindow(Qt.QMainWindow):
                     if (cube[1,j,k] != 0) and (cube[i,j,k][0].merge(cube[1,j,k][0]).split_bodies().n_blocks == 1) and \
                     (self.fit_check(cube[i,j,k][0].merge(cube[1,j,k][0])) == True):
                         i_pair = np.append(i_pair, [cube[i,j,k][0].merge(cube[1,j,k][0])])
-                        i_pair_vol = np.append(i_pair_vol, [i_pair[len(i_pair)-1].volume])
+                        i_pair_dialen = np.append(i_pair_dialen, [i_pair[len(i_pair)-1].length])
                         i_append = np.append(i_append, [1,j,k])
                 elif (i == 1):
                     if (cube[0,j,k] != 0) and (cube[i,j,k][0].merge(cube[0,j,k][0]).split_bodies().n_blocks == 1) and \
                     (self.fit_check(cube[i,j,k][0].merge(cube[0,j,k][0])) == True):
                         i_pair = np.append(i_pair, [cube[i,j,k][0].merge(cube[0,j,k][0])])
-                        i_pair_vol = np.append(i_pair_vol, [i_pair[len(i_pair)-1].volume])
+                        i_pair_dialen = np.append(i_pair_dialen, [i_pair[len(i_pair)-1].length])
                         i_append = np.append(i_append, [0,j,k])
                     if (cube[2,j,k] != 0) and (cube[i,j,k][0].merge(cube[2,j,k][0]).split_bodies().n_blocks == 1) and \
                     (self.fit_check(cube[i,j,k][0].merge(cube[2,j,k][0])) == True):
                         i_pair = np.append(i_pair, [cube[i,j,k][0].merge(cube[2,j,k][0])])
-                        i_pair_vol = np.append(i_pair_vol, [i_pair[len(i_pair)-1].volume])
+                        i_pair_dialen = np.append(i_pair_dialen, [i_pair[len(i_pair)-1].length])
                         i_append = np.append(i_append, [2,j,k])
 
                 if (j == 0) or (j == 2):
                     if (cube[i,1,k] != 0) and (cube[i,j,k][0].merge(cube[i,1,k][0]).split_bodies().n_blocks == 1) and \
                     (self.fit_check(cube[i,j,k][0].merge(cube[i,1,k][0])) == True):
                         j_pair = np.append(j_pair, [cube[i,j,k][0].merge(cube[i,1,k][0])])
-                        j_pair_vol = np.append(j_pair_vol, [j_pair[len(j_pair)-1].volume])
+                        j_pair_dialen = np.append(j_pair_dialen, [j_pair[len(j_pair)-1].length])
                         j_append = np.append(j_append, [i,1,k])
                 elif (j == 1):
                     if (cube[i,0,k] != 0) and (cube[i,j,k][0].merge(cube[i,0,k][0]).split_bodies().n_blocks == 1) and \
                     (self.fit_check(cube[i,j,k][0].merge(cube[i,0,k][0])) == True):
                         j_pair = np.append(j_pair, [cube[i,j,k][0].merge(cube[i,0,k][0])])
-                        j_pair_vol = np.append(j_pair_vol, [j_pair[len(j_pair)-1].volume])
+                        j_pair_dialen = np.append(j_pair_dialen, [j_pair[len(j_pair)-1].length])
                         j_append = np.append(j_append, [i,0,k])
                     if (cube[i,2,k] != 0) and (cube[i,j,k][0].merge(cube[i,2,k][0]).split_bodies().n_blocks == 1) and \
                     (self.fit_check(cube[i,j,k][0].merge(cube[i,2,k][0])) == True):
                         j_pair = np.append(j_pair, [cube[i,j,k][0].merge(cube[i,2,k][0])])
-                        j_pair_vol = np.append(j_pair_vol, [j_pair[len(j_pair)-1].volume])
+                        j_pair_dialen = np.append(j_pair_dialen, [j_pair[len(j_pair)-1].length])
                         j_append = np.append(j_append, [i,2,k])
 
                 if (k == 0) or (k == 2):
                     if (cube[i,j,1] != 0) and (cube[i,j,k][0].merge(cube[i,j,1][0]).split_bodies().n_blocks == 1) and \
                     (self.fit_check(cube[i,j,k][0].merge(cube[i,j,1][0])) == True):
                         k_pair = np.append(k_pair, [cube[i,j,k][0].merge(cube[i,j,1][0])])
-                        k_pair_vol = np.append(k_pair_vol, [k_pair[len(k_pair)-1].volume])
+                        k_pair_dialen = np.append(k_pair_dialen, [k_pair[len(k_pair)-1].length])
                         k_append = np.append(k_append, [i,j,1])
                 elif (k == 1):
                     if (cube[i,j,0] != 0) and (cube[i,j,k][0].merge(cube[i,j,0][0]).split_bodies().n_blocks == 1) and \
                     (self.fit_check(cube[i,j,k][0].merge(cube[i,j,0][0])) == True):
                         k_pair = np.append(k_pair, [cube[i,j,k][0].merge(cube[i,j,0][0])])
-                        k_pair_vol = np.append(k_pair_vol, [k_pair[len(k_pair)-1].volume])
+                        k_pair_dialen = np.append(k_pair_dialen, [k_pair[len(k_pair)-1].length])
                         k_append = np.append(k_append, [i,j,0])
                     if (cube[i,j,2] != 0) and (cube[i,j,k][0].merge(cube[i,j,2][0]).split_bodies().n_blocks == 1) and \
                     (self.fit_check(cube[i,j,k][0].merge(cube[i,j,2][0])) == True):
                         k_pair = np.append(k_pair, [cube[i,j,k][0].merge(cube[i,j,2][0])])
-                        k_pair_vol = np.append(k_pair_vol, [k_pair[len(k_pair)-1].volume])
+                        k_pair_dialen = np.append(k_pair_dialen, [k_pair[len(k_pair)-1].length])
                         k_append = np.append(k_append, [i,j,2])
 
-                # group all possible pairs info into pair_option, append_option, and pair_vol
+                # group all possible pairs info into pair_option, append_option, and pair_dialen
                 pair_option = np.append(np.append(i_pair, j_pair), k_pair)
                 append_option = np.append(np.append(i_append, j_append), k_append)
-                pair_vol = np.append(np.append(i_pair_vol, j_pair_vol), k_pair_vol)
+                pair_dialen = np.append(np.append(i_pair_dialen, j_pair_dialen), k_pair_dialen)
                 # format append_option so x,y,z indices are kept in arrays of 3
                 row = int((len(append_option) + 1) / 3)
                 append_option = np.reshape(append_option, (row, 3))
@@ -1282,18 +1203,18 @@ class MainWindow(Qt.QMainWindow):
                 if (discard != None):
                     pair_option = np.delete(pair_option, discard)
                     append_option = np.delete(append_option, discard, 0)
-                    pair_vol = np.delete(pair_vol, discard)
+                    pair_dialen = np.delete(pair_dialen, discard)
 
                 # select largest pair option
-                if pair_vol.size != 0:
-                    max_pair_vol = max(pair_vol)
+                if pair_dialen.size != 0:
+                    max_pair_dialen = max(pair_dialen)
                 else:
-                    max_pair_vol = 0
+                    max_pair_dialen = 0
 
                 # execute pair-joining
-                if max_pair_vol != 0:
-                    # find index of the pair option that has largest volume
-                    x = np.where(pair_vol == max_pair_vol)
+                if max_pair_dialen != 0:
+                    # find index of the pair option that has largest bounding box diagonal length
+                    x = np.where(pair_dialen == max_pair_dialen)
                     x = x[0][0]
                     # record the pair-joining step in report.txt
                     print("cube[", i, j, k, "][ 0 ] <-- cube[", ' '.join(map(str, append_option[x])), "][ 0 ]", end = "\n", file = report)
@@ -1312,7 +1233,7 @@ class MainWindow(Qt.QMainWindow):
             os.remove(f)
 
         # partition color options
-        color = ["y", "g", "r", "b"]
+        color = ["y", "g", "r", "cyan","tan", "purple", "w"]
         ind = -1
 
         # display partitions
@@ -1320,16 +1241,20 @@ class MainWindow(Qt.QMainWindow):
             for j in range(0,3):
                 for k in range(0,3):
                     if cube[i,j,k] != 0:
-                        # rotate through the 4 partition plotting colors
-                        if ind == 3:
+                        # rotate through the 6 partition plotting colors
+                        if ind == 5:
                             ind = 0
                         else:
                             ind += 1
-                        # self.plotter.add_mesh(cube[i,j,k].outline(), show_edges=True, color=color[ind], opacity=0.8)
-                        self.plotter.add_mesh(cube[i,j,k], show_edges=True, color=color[ind], opacity=0.3)
+                        self.plotter.add_mesh(cube[i,j,k], show_edges=True, color=color[ind], opacity=1)
                         # save combined partitions
                         file_name = "section [" + str(i) + "," + str(j) + "," + str(k) +"].STL"
                         pv.save_meshio("output/"+ file_name, cube[i,j,k][0])
+                        # count number of resulting partitions
+                        rslt_num += 1
+        
+        # show number of resulting parts
+        print("Resulting Partitions: ", rslt_num)
 
     def next_cubes_ray(self, value):
         ''' create cubes within the mesh from the face centers of the first cube'''
