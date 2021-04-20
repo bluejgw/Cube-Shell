@@ -1,11 +1,10 @@
 import pyvista as pv
-from pyvista.core.pointset import PolyData
 import sympy as sp
 from sympy import Matrix, lambdify
 import numpy as np
 from PyQt5 import Qt, QtWidgets
 from PyQt5.QtWidgets import QMessageBox
-from pyvistaqt import QtInteractor
+from pyvistaqt import QtInteractor, MultiPlotter
 import sys, os, time, glob
 import trimesh
 
@@ -22,6 +21,8 @@ class MainWindow(Qt.QMainWindow):
 
         # add the pyvista interactor object
         self.plotter = QtInteractor(self.frame)
+        # self.plotter = MultiPlotter(nrows = 2, ncols = 2)
+
         vlayout.addWidget(self.plotter.interactor)
 
         self.frame.setLayout(vlayout)
@@ -60,7 +61,8 @@ class MainWindow(Qt.QMainWindow):
 
     def open_mesh(self):
         """ add a mesh to the pyqt frame """
-        global mesh, mesh_vol
+        global int_surface, ext_surface, mesh_vol, mesh, mesh_grid
+        global x_range, y_range, z_range
 
         # open file
         file_info = QtWidgets.QFileDialog.getOpenFileName()
@@ -79,9 +81,22 @@ class MainWindow(Qt.QMainWindow):
         # y = [0,-1,0]
         # sym_orient = trimesh.geometry.align_vectors(y, a)
         # pre = pre.apply_transform(sym_orient)
-        pre.export('data/'+ mesh_name + '_oriented.STL')
-        mesh = pv.read('data/'+ mesh_name + '_oriented.STL')
-        # mesh.points /= 30
+        pre.export('data/'+ mesh_name + '_oriented.stl')
+        ext_surface = pv.read('data/'+ mesh_name + '_oriented.stl')
+        # ext_surface.points /= 5
+        ext_surface.points *= 20 
+
+        # create internal offset
+        thickness = 0.08 # inches
+        point_list = ext_surface.points
+        cell_list = ext_surface.faces
+        point_normal_list = ext_surface.point_normals
+        offset_point_list = point_list - point_normal_list * thickness
+        int_surface = pv.PolyData(offset_point_list, cell_list)
+                
+        grid = pv.create_grid(ext_surface, dimensions = (150, 150, 150)).triangulate()
+        model = grid.clip_surface(ext_surface)
+        mesh = model.clip_surface(int_surface, invert=False)
 
         # print mesh info
         print("Mesh Name:", mesh_name)
@@ -93,8 +108,17 @@ class MainWindow(Qt.QMainWindow):
         # find mesh centroid and translate the mesh so that's the origin
         # self.centroid()
 
+        # find the max and min of x,y,z axes of mesh
+        ranges = mesh.bounds
+        x_range = abs(ranges[0] - ranges[1])
+        y_range = abs(ranges[2] - ranges[3])
+        z_range = abs(ranges[4] - ranges[5])
+        print("x:", float(format(x_range, ".5f")), "in")
+        print("y:", float(format(y_range, ".5f")), "in")
+        print("z:", float(format(z_range, ".5f")), "in")
+
         # mesh volume
-        mesh_vol = float(format(mesh.volume, ".5f"))
+        mesh_vol = float(format(ext_surface.volume, ".5f"))
         print("Mesh Volume:", mesh_vol)
 
     def reset_plotter(self):
@@ -104,6 +128,7 @@ class MainWindow(Qt.QMainWindow):
         
         # callback opened mesh
         self.plotter.add_mesh(mesh, show_edges=True, color="w", opacity=0.6)
+        # self.plotter.add_mesh(ext_surface, show_edges=True, color="w", opacity=0.6)
         
         # show origin
         self.plotter.add_axes_at_origin(xlabel='X', ylabel='Y', zlabel='Z', line_width=6, labels_off=True)
@@ -170,11 +195,12 @@ class MainWindow(Qt.QMainWindow):
         # track starting time
         cubic_skeleton_start = time.time()
 
-        self.max_cube_ray()
-        cube, ranked_cube, size_error = self.max_cube_slice()
+        self.max_cube_ray(int_surface)
+        cube, ext_cube, ranked_cube, ext_ranked_cube, size_error, ext_size_error = self.max_cube_slice(mesh)
         # if (size_error == False):
         #     self.combine_pair_partitions(cube, ranked_cube)
         self.combine_pair_partitions(cube, ranked_cube)
+        # self.combine_pair_partitions(ext_cube, ext_ranked_cube)
 
         # track ending time & duration
         cubic_skeleton_end = time.time()
@@ -186,21 +212,22 @@ class MainWindow(Qt.QMainWindow):
         # track starting time
         cuboid_skeleton_start = time.time()
 
-        _, max_normal, intxn = self.max_cube_ray(ext = True)
-        self.max_cuboid(intxn, max_normal)
-        cube, ranked_cube, size_error = self.max_cube_slice()
+        _, max_normal, intxn = self.max_cube_ray(int_surface, ext = True)
+        self.max_cuboid(int_surface, intxn, max_normal)
+        cube, ext_cube, ranked_cube, ext_ranked_cube, size_error, ext_size_error = self.max_cube_slice(mesh)
         # if (size_error == False):
         #     self.combine_pair_partitions(cube, ranked_cube)
-        self.combine_pair_partitions(cube, ranked_cube)
+        # self.combine_pair_partitions(cube, ranked_cube)
+        # self.combine_pair_partitions(ext_cube, ext_ranked_cube)
         
         # track ending time & duration
         cuboid_skeleton_end = time.time()
         cuboid_skeleton_run = cuboid_skeleton_end - cuboid_skeleton_start
         print("Total elapsed run time: %g seconds" % (cuboid_skeleton_run + cuboid_skeleton_run))
         
-    def max_cube_ray(self, ext = False):
+    def max_cube_ray(self, mesh, ext = False):
         """ add a maximally inscribed cube within the opened mesh (via ray tracing) """
-        global x_range, y_range, z_range, Vol_centroid, r_len
+        global Vol_centroid, r_len
         global face_center, max_cube_vol, max_cube, max_cuboid
         global max_cube_start, max_cube_end, max_cube_run
         global max_cube_V, max_cube_F
@@ -212,25 +239,16 @@ class MainWindow(Qt.QMainWindow):
         # find mesh vertices
         V = np.array(mesh.points)
 
-        # find the max and min of x,y,z axes of mesh
-        ranges = mesh.bounds
-        x_range = abs(ranges[0] - ranges[1])
-        y_range = abs(ranges[2] - ranges[3])
-        z_range = abs(ranges[4] - ranges[5])
-        print("x:", x_range)
-        print("y:", y_range)
-        print("z:", z_range)
-
         # show centroid
         Vol_centroid = np.array([0,0,0]) # overwrite centroid with origin at principle axes
         self.plotter.add_mesh(pv.PolyData(Vol_centroid), color='r', point_size=20.0, render_points_as_spheres=True)
 
         # find the nearest possible cube vertex from top rays & mesh intersection
-        top_vert = self.cube_center_ray(Vol_centroid, 'z')
+        top_vert = self.cube_center_ray(mesh, Vol_centroid, 'z')
         top = self.furthest_pt(top_vert, Vol_centroid)
 
         # find the nearest possible cube vertex from bottom rays & mesh intersection
-        bottom_vert = self.cube_center_ray(Vol_centroid, '-z')
+        bottom_vert = self.cube_center_ray(mesh, Vol_centroid, '-z')
         bottom = self.furthest_pt(bottom_vert, Vol_centroid)
 
         # find the nearest possible cube vertex between the two
@@ -247,7 +265,7 @@ class MainWindow(Qt.QMainWindow):
         # create and show max cube
         max_cube_V, max_cube_F, max_cube_vol = self.create_cube(intxn, Vol_centroid, np.array([0,0,Vol_centroid[2]]))
         max_cube = pv.PolyData(max_cube_V, max_cube_F)
-        self.plotter.add_mesh(max_cube, show_edges=True, line_width=3, color="g", opacity=0.6)
+        self.plotter.add_mesh(max_cube, show_edges=True, line_width=3, color="g")
 
         # find & show max cube face centers
         cell_center = pv.PolyData(max_cube_V, max_cube_F).cell_centers()
@@ -268,7 +286,7 @@ class MainWindow(Qt.QMainWindow):
 
         return face_center, max_normal, intxn
 
-    def cube_center_ray(self, start, dir):
+    def cube_center_ray(self, mesh, start, dir):
         ''' from starting point shoot out n rays to find vertices of possible cubes '''
         global r_num, r_rot, r_dec
 
@@ -417,7 +435,7 @@ class MainWindow(Qt.QMainWindow):
         R = lambdify(t, R_t)
         return R
 
-    def max_cuboid(self, furthest_pt, max_normal):
+    def max_cuboid(self, mesh, furthest_pt, max_normal):
         ''' extend max cube into maximally inscribed cuboid '''
         global face_center, max_cuboid, max_cuboid_vol
 
@@ -439,12 +457,12 @@ class MainWindow(Qt.QMainWindow):
             faces = np.reshape(max_cube_F, (6,5))
             V_ind = faces[F_ind][0,1:5]
             current_V = np.vstack([max_cube_V[V_ind[0]], max_cube_V[V_ind[1]], max_cube_V[V_ind[2]], max_cube_V[V_ind[3]]])
-            ext_V = self.ext_ray(current_V, ext_dir[i])
+            ext_V = self.ext_ray(mesh, current_V, ext_dir[i])
             max_cube_V[V_ind] = ext_V
 
         # create & show extended max cube
         max_cuboid = pv.PolyData(max_cube_V, max_cube_F)
-        self.plotter.add_mesh(max_cuboid, show_edges=True, color="y", opacity=0.6)
+        self.plotter.add_mesh(max_cuboid, show_edges=True, color="y")
 
         # find face centers of extended max cube
         cell_center = max_cuboid.cell_centers()
@@ -457,7 +475,7 @@ class MainWindow(Qt.QMainWindow):
         max_cuboid_vol = float(format(max_cuboid.volume, ".5f"))
         print("Extended Max Cube Volume:", max_cuboid_vol)
 
-    def ext_ray(self, current_V, ext_dir):
+    def ext_ray(self, mesh, current_V, ext_dir):
         ''' shoot rays from vertices of a cube face towards face normal & obtain intersections with mesh '''
         # initialize variables
         r_len = np.sqrt((x_range/2)**2 + (y_range/2)**2 + (z_range/2)**2)
@@ -511,14 +529,17 @@ class MainWindow(Qt.QMainWindow):
                     c = int(line_content[0][10])
         return a, b, c
 
-    def max_cube_slice(self):
+    def max_cube_slice(self, mesh):
         ''' splitting the mesh in 27 regions according to the faces of max_cube '''
         global face_center
 
         # creating a 3x3x3 matrix representing the 27 regions
         height = np.zeros(3, dtype=object)
+        ext_height = np.zeros(3, dtype=object)
         side = np.zeros((3,3), dtype=object)
+        ext_side = np.zeros((3,3), dtype=object)
         cube = np.zeros((3,3,3), dtype=object)
+        ext_cube = np.zeros((3,3,3), dtype=object)
 
         # find face center x- and y-directions
         if abs(np.around(face_center[1][0],decimals=5)) != 0:
@@ -553,22 +574,24 @@ class MainWindow(Qt.QMainWindow):
         z_min = face_center[5]
 
         # spliting the mesh along the z-axis
-        # height[0] = mesh.clip_closed_surface('z', origin=z_max)
-        # height[1] = mesh.clip_closed_surface('-z', origin=z_max).clip_closed_surface('z', origin=z_min)
-        # height[2] = mesh.clip_closed_surface('-z', origin=z_min)
         height[0] = mesh.clip('z', origin = z_max, invert = False)
         height[1] = mesh.clip('-z', origin = z_max, invert = False).clip('z', origin = z_min, invert = False)
         height[2] = mesh.clip('-z', origin = z_min, invert = False)
 
+        ext_height[0] = ext_surface.clip('z', origin = z_max, invert = False)
+        ext_height[1] = ext_surface.clip('-z', origin = z_max, invert = False).clip('z', origin = z_min, invert = False)
+        ext_height[2] = ext_surface.clip('-z', origin = z_min, invert = False)
+
         # spliting the mesh along the y-axis
         for k in range(0,3):
             try:
-                # side[0,k] = height[k].clip_closed_surface('y', origin=y_max)
-                # side[1,k] = height[k].clip_closed_surface('-y', origin=y_max).clip_closed_surface('y', origin=y_min)
-                # side[2,k] = height[k].clip_closed_surface('-y', origin=y_min)
                 side[0,k] = height[k].clip('y', origin = y_max, invert = False)
                 side[1,k] = height[k].clip('-y', origin = y_max, invert = False).clip('y', origin = y_min, invert = False)
                 side[2,k] = height[k].clip('-y', origin = y_min, invert = False)
+
+                ext_side[0,k] = ext_height[k].clip('y', origin = y_max, invert = False)
+                ext_side[1,k] = ext_height[k].clip('-y', origin = y_max, invert = False).clip('y', origin = y_min, invert = False)
+                ext_side[2,k] = ext_height[k].clip('-y', origin = y_min, invert = False)
             except ValueError:
                 pass
 
@@ -576,11 +599,12 @@ class MainWindow(Qt.QMainWindow):
         for j in range(0,3):
             for k in range(0,3):
                 try:
-                    # cube[0,j,k] = side[j,k].clip_closed_surface('x', origin=x_max)
                     cube[0,j,k] = side[j,k].clip('x', origin = x_max, invert = False)
                     cube[0,j,k] = cube[0,j,k].split_bodies()
+
+                    ext_cube[0,j,k] = ext_side[j,k].clip('x', origin = x_max, invert = False)
+                    ext_cube[0,j,k] = ext_cube[0,j,k].split_bodies()
                     
-                    # cube[1,j,k] = side[j,k].clip_closed_surface('x', origin=x_min).clip_closed_surface('-x', origin=x_max).clean() # need to test for knight
                     if (j == 1) and (k == 1):
                         if (max_cuboid == 0):
                             cube[1,j,k] = pv.MultiBlock([max_cube.triangulate()])
@@ -589,11 +613,15 @@ class MainWindow(Qt.QMainWindow):
                     else:
                         cube[1,j,k] = side[j,k].clip('x', origin = x_min, invert = False).clip('-x', origin = x_max, invert = False)
                         cube[1,j,k] = cube[1,j,k].split_bodies()
+
+                        ext_cube[1,j,k] = ext_side[j,k].clip('x', origin = x_min, invert = False).clip('-x', origin = x_max, invert = False)
+                        ext_cube[1,j,k] = ext_cube[1,j,k].split_bodies()
                         
-                    
-                    # cube[2,j,k] = side[j,k].clip_closed_surface('-x', origin=x_min)
                     cube[2,j,k] = side[j,k].clip('-x', origin = x_min, invert = False)
                     cube[2,j,k] = cube[2,j,k].split_bodies()
+
+                    ext_cube[2,j,k] = ext_side[j,k].clip('-x', origin = x_min, invert = False)
+                    ext_cube[2,j,k] = ext_cube[2,j,k].split_bodies()
                 except ValueError:
                     pass
 
@@ -616,30 +644,33 @@ class MainWindow(Qt.QMainWindow):
         #                         ind += 1
         #                     self.plotter.add_mesh(cube[i,j,k][l], show_edges=True, color=color[ind], opacity=1)
 
-        # display partitions if SizeError is raised
-        for i in range(0,3):
-            for j in range(0,3):
-                for k in range(0,3):
-                    # rotate the 8 indicating colors
-                    if ind == 7:
-                        ind = 0
-                    else:
-                        ind += 1
-                    if (cube[i,j,k]!= 0) and (cube[i,j,k].volume != 0):
-                        self.plotter.add_mesh(cube[i,j,k], show_edges=True, color=color[ind], opacity=1)
+        # # display partitions
+        # for i in range(0,3):
+        #     for j in range(0,3):
+        #         for k in range(0,3):
+        #             # rotate the 8 indicating colors
+        #             if ind == 7:
+        #                 ind = 0
+        #             else:
+        #                 ind += 1
+        #             if (cube[i,j,k]!= 0) and (cube[i,j,k].volume != 0):
+        #                 self.plotter.add_mesh(cube[i,j,k], show_edges=True, color=color[ind], opacity=.6)
 
         # append island partitions to the 26 main partitions
-        appended_cube = self.append_island(cube)
+        appended_cube = self.append_island(int_surface, cube)
+        ext_appended_cube = self.append_island(ext_surface, ext_cube)
 
         # rank all partitions by volume in descending order
         ranked_cube = self.rank_partitions(appended_cube)
+        ext_ranked_cube = self.rank_partitions(ext_appended_cube)
 
         # check if the initial partition produces parts larger than the print volume
         size_error = self.partition_size_check(appended_cube)
+        ext_size_error = self.partition_size_check(ext_appended_cube)
 
-        return cube, ranked_cube, size_error
+        return cube, ext_cube, ranked_cube, ext_ranked_cube, size_error, ext_size_error
 
-    def append_island(self, cube):
+    def append_island(self, mesh, cube):
         ''' appending island partitions to the 26 main partitions '''
         # start output text file
         report = open("report.txt","w")
@@ -670,7 +701,7 @@ class MainWindow(Qt.QMainWindow):
                             elif min(ratio) > 1:
                                 p = 0
                             extra[i,j,k] = cube[i,j,k].copy()
-                            if (cube[i,j,k]['Block-0' + str(p)].length > mesh.length / 1000):
+                            if (cube[i,j,k]['Block-0' + str(p)].length > mesh.length / 500):
                                 cube[i,j,k] = pv.MultiBlock([cube[i,j,k]['Block-0' + str(p)]])
                                 extra[i,j,k].pop(extra[i,j,k].keys()[p])
                             else:
@@ -694,7 +725,6 @@ class MainWindow(Qt.QMainWindow):
         exclude = ["cube[ 1 1 1 ][ 0 ]"]
 
         # merge the island partitions with neighboring major/island partitions
-        # self.plotter.clear()
         for v in range(0,island_num):
             # set indicies
             i = int(island[v][7])
@@ -845,10 +875,6 @@ class MainWindow(Qt.QMainWindow):
             pair_option = np.append(np.append(i_pair, j_pair), k_pair)
             pair_dialen = np.append(np.append(i_pair_dialen, j_pair_dialen), k_pair_dialen)
             append_option = np.append(np.append(i_append, j_append), k_append)
-            # print("i_append:", i_append)
-            # print("j_append:", j_append)
-            # print("k_append:", k_append)
-            print("Append Options:", append_option)
             
             # post-process option lists
             # indicate options to exclude: center cube/cuboid and self
@@ -882,7 +908,6 @@ class MainWindow(Qt.QMainWindow):
                     extra[int(append_option[x][7]), int(append_option[x][9]), int(append_option[x][11])][int(append_option[x][16])] = pair_option[x]
                 else:
                     cube[int(append_option[x][6]), int(append_option[x][8]), int(append_option[x][10])][0] = pair_option[x]
-                # self.plotter.add_mesh(pair_option[x], show_edges=True, color="purple", opacity=1)
                 
         # close report.txt
         report.close()
@@ -891,12 +916,12 @@ class MainWindow(Qt.QMainWindow):
         appened_cube = cube.copy()
 
         # # empty the output folder
-        # files = glob.glob('output/*.STL')
+        # files = glob.glob('output/*.stl')
         # for f in files:
         #     os.remove(f)
         
-        # # section color choices
-        # color = ["r", "cyan", "g", "y"]
+        # section color choices
+        # color = ["y", "g", "r", "cyan","tan", "purple", "w"]
         # ind = -1
 
         # # clear plotter
@@ -906,25 +931,15 @@ class MainWindow(Qt.QMainWindow):
         # for i in range(0,3):
         #     for j in range(0,3):
         #         for k in range(0,3):
-        #             # rotate the 4 indicating colors
-        #             if ind == 3:
+        #             # rotate the 6 indicating colors
+        #             if ind == 5:
         #                 ind = 0
         #             else:
         #                 ind += 1
         #             if cube[i,j,k] != 0:
-        #                 # if (i == 1) and (j == 0) and (k == 2):
-        #                 #     normals = pv.PolyData(cube[i,j,k][0].points, cube[i,j,k][0].cells).cell_normals
-        #                 #     print(normals)
-        #                 #     cells = cube[i,j,k][0].cells
-        #                 #     cells = np.reshape(cells, (int((len(cells)+1)/4), 4))
-        #                 #     print(cells)
-        #                 #     self.plotter.add_mesh(cube[i,j,k], show_edges=True, color=color[ind], opacity=1)
-        #                 # else:
-        #                 #     self.plotter.add_mesh(cube[i,j,k], show_edges=True, color=color[ind], opacity=1)
         #                 self.plotter.add_mesh(cube[i,j,k], show_edges=True, color=color[ind], opacity=1)
-        #                 # save combined partitions
-        #                 file_name = "section [" + str(i) + "," + str(j) + "," + str(k) +"].STL"
-        #                 pv.save_meshio("output/"+ file_name, cube[i,j,k][0])
+
+        # self.plotter.add_mesh(cube[1,2,1], show_edges=True, color=color[ind], opacity=1)
 
         return appened_cube
 
@@ -1028,7 +1043,7 @@ class MainWindow(Qt.QMainWindow):
                         ind += 1
                     if cube[i,j,k] != 0:
                         self.plotter.add_mesh(cube[i,j,k], show_edges=True, color=color[ind], opacity=0.8)
-                        file_name = "section [" + str(i) + "," + str(j) + "," + str(k) +"].STL"
+                        file_name = "section [" + str(i) + "," + str(j) + "," + str(k) +"].stl"
                         pv.save_meshio("output/"+ file_name, cube[i,j,k][0])
         
     def rank_partitions(self, cube):
@@ -1207,14 +1222,14 @@ class MainWindow(Qt.QMainWindow):
 
                 # select largest pair option
                 if pair_dialen.size != 0:
-                    max_pair_dialen = max(pair_dialen)
+                    min_pair_dialen = min(pair_dialen)
                 else:
-                    max_pair_dialen = 0
+                    min_pair_dialen = 0
 
                 # execute pair-joining
-                if max_pair_dialen != 0:
+                if min_pair_dialen != 0:
                     # find index of the pair option that has largest bounding box diagonal length
-                    x = np.where(pair_dialen == max_pair_dialen)
+                    x = np.where(pair_dialen == min_pair_dialen)
                     x = x[0][0]
                     # record the pair-joining step in report.txt
                     print("cube[", i, j, k, "][ 0 ] <-- cube[", ' '.join(map(str, append_option[x])), "][ 0 ]", end = "\n", file = report)
@@ -1228,31 +1243,38 @@ class MainWindow(Qt.QMainWindow):
                     used = np.reshape(used, (row, 3))
 
         # empty the output folder
-        files = glob.glob('output/*.STL')
+        files = glob.glob('output/*.stl')
         for f in files:
             os.remove(f)
-
-        # partition color options
-        color = ["y", "g", "r", "cyan","tan", "purple", "w"]
-        ind = -1
+        
+        rslt = pv.MultiBlock()
+        rslt_boundary = pv.MultiBlock()
+        rslt_offset = pv.MultiBlock()
+        rslt_offset_boundary = pv.MultiBlock()
 
         # display partitions
         for i in range(0,3):
             for j in range(0,3):
                 for k in range(0,3):
                     if cube[i,j,k] != 0:
-                        # rotate through the 6 partition plotting colors
-                        if ind == 5:
-                            ind = 0
+                        if (i == 1) and (j == 1) and (k == 1):
+                            rslt.append(cube[i,j,k][0].triangulate())
                         else:
-                            ind += 1
-                        self.plotter.add_mesh(cube[i,j,k], show_edges=True, color=color[ind], opacity=1)
-                        # save combined partitions
-                        file_name = "section [" + str(i) + "," + str(j) + "," + str(k) +"].STL"
-                        pv.save_meshio("output/"+ file_name, cube[i,j,k][0])
+                            # rslt.append(pv.PolyData(cube[i,j,k][0].points, cube[i,j,k][0].cells))
+                            rslt.append(cube[i,j,k][0].extract_surface().triangulate())
+                            # print(type(cube[i,j,k][0].extract_geometry().triangulate()))
+
                         # count number of resulting partitions
                         rslt_num += 1
         
+        self.plotter.clear()
+        self.plotter.add_mesh(rslt, multi_colors = True, show_edges = True, opacity = .9)
+
+        # save combined partitions
+        for v in range(0,rslt.n_blocks):
+            file_name = "output/" + "rslt " + str(v) + ".stl"
+            rslt[v].save(file_name)
+           
         # show number of resulting parts
         print("Resulting Partitions: ", rslt_num)
 
