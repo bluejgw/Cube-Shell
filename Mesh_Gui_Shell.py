@@ -7,6 +7,7 @@ from PyQt5.QtWidgets import QMessageBox
 from pyvistaqt import QtInteractor, MultiPlotter
 import sys, os, time, glob
 import trimesh
+import pymeshfix as mf
 
 # initiate stored mesh
 mesh = pv.PolyData()
@@ -54,6 +55,8 @@ class MainWindow(Qt.QMainWindow):
         self.cuboid_skeleton_action.triggered.connect(self.cuboid_skeleton)
         editMenu.addAction(self.cuboid_skeleton_action)
         
+        self.plotter.set_background(color = 'w')
+        
         if show:
             self.show()
 
@@ -61,7 +64,7 @@ class MainWindow(Qt.QMainWindow):
 
     def open_mesh(self):
         """ add a mesh to the pyqt frame """
-        global int_surface, ext_surface, mesh_vol, mesh, mesh_grid
+        global int_surface, ext_surface, mesh_vol, mesh
         global x_range, y_range, z_range
 
         # open file
@@ -81,23 +84,28 @@ class MainWindow(Qt.QMainWindow):
         # y = [0,-1,0]
         # sym_orient = trimesh.geometry.align_vectors(y, a)
         # pre = pre.apply_transform(sym_orient)
-        pre.export('data/'+ mesh_name + '_oriented.stl')
-        ext_surface = pv.read('data/'+ mesh_name + '_oriented.stl')
-        # ext_surface.points /= 5
-        ext_surface.points *= 20 
+        post_file_path = 'data/'+ mesh_name + '_oriented.stl'
+        pre.export(post_file_path)
+        ext_surface = pv.read(post_file_path)
+        # ext_surface.points /= 20
+        ext_surface.points *= 10
 
         # create internal offset
-        thickness = 0.08 # inches
-        point_list = ext_surface.points
-        cell_list = ext_surface.faces
-        point_normal_list = ext_surface.point_normals
-        offset_point_list = point_list - point_normal_list * thickness
-        int_surface = pv.PolyData(offset_point_list, cell_list)
-                
-        grid = pv.create_grid(ext_surface, dimensions = (150, 150, 150)).triangulate()
-        model = grid.clip_surface(ext_surface)
-        mesh = model.clip_surface(int_surface, invert=False)
+        thickness = 0.1 # inches
+        grid = pv.create_grid(ext_surface).triangulate()
+        solid = grid.clip_surface(ext_surface)
+        solid.compute_implicit_distance(ext_surface, inplace=True)
+        imp_dis_max = max(solid['implicit_distance'])
 
+        shell_threshold = imp_dis_max - thickness
+        shell = solid.clip_scalar('implicit_distance', value = shell_threshold)
+        int_surface = shell.extract_geometry()
+
+        meshfix = mf.MeshFix(int_surface)
+        meshfix.repair(verbose=True)
+
+        mesh = solid.clip_surface(int_surface, invert=False)
+        
         # print mesh info
         print("Mesh Name:", mesh_name)
         print("Mesh Type:", mesh_type[1:])
@@ -106,20 +114,20 @@ class MainWindow(Qt.QMainWindow):
         self.reset_plotter()
 
         # find mesh centroid and translate the mesh so that's the origin
-        # self.centroid()
+        # self.centroid(ext_surface)
 
         # find the max and min of x,y,z axes of mesh
         ranges = mesh.bounds
         x_range = abs(ranges[0] - ranges[1])
         y_range = abs(ranges[2] - ranges[3])
         z_range = abs(ranges[4] - ranges[5])
-        print("x:", float(format(x_range, ".5f")), "in")
-        print("y:", float(format(y_range, ".5f")), "in")
-        print("z:", float(format(z_range, ".5f")), "in")
+        print("x:", float(format(x_range, ".2f")), "in")
+        print("y:", float(format(y_range, ".2f")), "in")
+        print("z:", float(format(z_range, ".2f")), "in")
 
         # mesh volume
-        mesh_vol = float(format(ext_surface.volume, ".5f"))
-        print("Mesh Volume:", mesh_vol)
+        mesh_vol = float(format(mesh.volume, ".2f"))
+        print("Mesh Volume:", mesh_vol, "in^3")
 
     def reset_plotter(self):
         """ clear plotter of mesh or interactive options """
@@ -127,18 +135,17 @@ class MainWindow(Qt.QMainWindow):
         self.plotter.clear()
         
         # callback opened mesh
-        self.plotter.add_mesh(mesh, show_edges=True, color="w", opacity=0.6)
-        # self.plotter.add_mesh(ext_surface, show_edges=True, color="w", opacity=0.6)
+        self.plotter.add_mesh(mesh, show_edges = True, color="w", opacity=0.6)
         
         # show origin
         self.plotter.add_axes_at_origin(xlabel='X', ylabel='Y', zlabel='Z', line_width=6, labels_off=True)
 
-        self.plotter.show_bounds()
+        # self.plotter.show_bounds()
 
         Vol_centroid = np.array([0,0,0])
         self.plotter.add_mesh(pv.PolyData(Vol_centroid), color='r', point_size=20.0, render_points_as_spheres=True)
         
-    def centroid(self):
+    def centroid(self, mesh):
         """ find centroid volumetrically and indicate on graph """
         global Vol_centroid, V
 
@@ -195,12 +202,12 @@ class MainWindow(Qt.QMainWindow):
         # track starting time
         cubic_skeleton_start = time.time()
 
-        self.max_cube_ray(int_surface)
-        cube, ext_cube, ranked_cube, ext_ranked_cube, size_error, ext_size_error = self.max_cube_slice(mesh)
+        _, max_normal, _ = self.max_cube_ray(int_surface)
+        cube, ranked_cube, size_error = self.max_cube_slice(mesh)
         # if (size_error == False):
         #     self.combine_pair_partitions(cube, ranked_cube)
         self.combine_pair_partitions(cube, ranked_cube)
-        # self.combine_pair_partitions(ext_cube, ext_ranked_cube)
+        # self.next_cubes_ray(int_surface, max_normal)
 
         # track ending time & duration
         cubic_skeleton_end = time.time()
@@ -214,11 +221,10 @@ class MainWindow(Qt.QMainWindow):
 
         _, max_normal, intxn = self.max_cube_ray(int_surface, ext = True)
         self.max_cuboid(int_surface, intxn, max_normal)
-        cube, ext_cube, ranked_cube, ext_ranked_cube, size_error, ext_size_error = self.max_cube_slice(mesh)
+        cube, ranked_cube, size_error = self.max_cube_slice(mesh)
         # if (size_error == False):
         #     self.combine_pair_partitions(cube, ranked_cube)
-        # self.combine_pair_partitions(cube, ranked_cube)
-        # self.combine_pair_partitions(ext_cube, ext_ranked_cube)
+        self.combine_pair_partitions(cube, ranked_cube)
         
         # track ending time & duration
         cuboid_skeleton_end = time.time()
@@ -277,7 +283,7 @@ class MainWindow(Qt.QMainWindow):
 
         # max cube volume
         if (ext == False):
-            max_cube_vol = float(format(max_cube_vol, ".5f"))
+            max_cube_vol = float(format(max_cube_vol, ".2f"))
             print("Max Cube Volume:", max_cube_vol)
 
         # # track ending time & duration
@@ -288,7 +294,7 @@ class MainWindow(Qt.QMainWindow):
 
     def cube_center_ray(self, mesh, start, dir):
         ''' from starting point shoot out n rays to find vertices of possible cubes '''
-        global r_num, r_rot, r_dec
+        global r_num, r_rot, r_dec, r_len
 
         # initialize variables
         r_num = 1
@@ -472,13 +478,13 @@ class MainWindow(Qt.QMainWindow):
         max_normal = max_cuboid.cell_normals
 
         # extended max cube volume
-        max_cuboid_vol = float(format(max_cuboid.volume, ".5f"))
+        max_cuboid_vol = float(format(max_cuboid.volume, ".2f"))
         print("Extended Max Cube Volume:", max_cuboid_vol)
 
     def ext_ray(self, mesh, current_V, ext_dir):
         ''' shoot rays from vertices of a cube face towards face normal & obtain intersections with mesh '''
         # initialize variables
-        r_len = np.sqrt((x_range/2)**2 + (y_range/2)**2 + (z_range/2)**2)
+        # r_len = np.sqrt((x_range/2)**2 + (y_range/2)**2 + (z_range/2)**2)
         ext_end = current_V + ext_dir * np.ones((4,1)) * r_len
         ext_int = [None] * 4
         ext_dis = np.zeros(4)
@@ -535,95 +541,76 @@ class MainWindow(Qt.QMainWindow):
 
         # creating a 3x3x3 matrix representing the 27 regions
         height = np.zeros(3, dtype=object)
-        ext_height = np.zeros(3, dtype=object)
         side = np.zeros((3,3), dtype=object)
-        ext_side = np.zeros((3,3), dtype=object)
         cube = np.zeros((3,3,3), dtype=object)
-        ext_cube = np.zeros((3,3,3), dtype=object)
+        side_processing = np.zeros(3, dtype=object)
+        cube_processing = np.zeros((3,3), dtype=object) 
 
-        # find face center x- and y-directions
-        if abs(np.around(face_center[1][0],decimals=5)) != 0:
-            if face_center[1][0] > face_center[3][0]:
-                x_max = face_center[1]
-                x_min = face_center[3]
-            else:
-                x_max = face_center[3]
-                x_min = face_center[1]
-            if face_center[2][1] > face_center[4][1]:
-                y_max = face_center[2]
-                y_min = face_center[4]
-            else:
-                y_max = face_center[4]
-                y_min = face_center[2]
-        elif abs(np.around(face_center[2][0],decimals=5)) != 0:
-            if face_center[2][0] > face_center[4][0]:
-                x_max = face_center[2]
-                x_min = face_center[4]
-            else:
-                x_max = face_center[4]
-                x_min = face_center[2]
-            if face_center[1][1] > face_center[3][1]:
-                y_max = face_center[1]
-                y_min = face_center[3]
-            else:
-                y_max = face_center[3]
-                y_min = face_center[1]
+        # initiate variables
+        face_center_x = []
+        face_center_y = []
+        face_center_z = []
+
+        # assign corresponding face_centers to x_max, x_min, y_max, y_min, z_max, z_min
+        for i in range(0,6):
+            face_center_x.append(face_center[i][0])
+            face_center_y.append(face_center[i][1])
+            face_center_z.append(face_center[i][2])
         
-        # set face center z-directions
-        z_max = face_center[0]
-        z_min = face_center[5]
+            max_face_center_x = max(face_center_x)
+            min_face_center_x = min(face_center_x)
+            max_face_center_y = max(face_center_y)
+            min_face_center_y = min(face_center_y)
+            max_face_center_z = max(face_center_z)
+            min_face_center_z = min(face_center_z)
+
+            max_x_ind = np.where(face_center_x == max_face_center_x)
+            min_x_ind = np.where(face_center_x == min_face_center_x)
+            max_y_ind = np.where(face_center_y == max_face_center_y)
+            min_y_ind = np.where(face_center_y == min_face_center_y)
+            max_z_ind = np.where(face_center_z == max_face_center_z)
+            min_z_ind = np.where(face_center_z == min_face_center_z)
+
+            max_x_ind = max_x_ind[0][0]
+            min_x_ind = min_x_ind[0][0]
+            max_y_ind = max_y_ind[0][0]
+            min_y_ind = min_y_ind[0][0]
+            max_z_ind = max_z_ind[0][0]
+            min_z_ind = min_z_ind[0][0]
+
+            x_max = face_center[max_x_ind]
+            x_min = face_center[min_x_ind]
+            y_max = face_center[max_y_ind]
+            y_min = face_center[min_y_ind]
+            z_max = face_center[max_z_ind]
+            z_min = face_center[min_z_ind]
 
         # spliting the mesh along the z-axis
-        height[0] = mesh.clip('z', origin = z_max, invert = False)
-        height[1] = mesh.clip('-z', origin = z_max, invert = False).clip('z', origin = z_min, invert = False)
-        height[2] = mesh.clip('-z', origin = z_min, invert = False)
-
-        ext_height[0] = ext_surface.clip('z', origin = z_max, invert = False)
-        ext_height[1] = ext_surface.clip('-z', origin = z_max, invert = False).clip('z', origin = z_min, invert = False)
-        ext_height[2] = ext_surface.clip('-z', origin = z_min, invert = False)
+        height[0], height_processing = mesh.clip('-z', origin = z_max, return_clipped = True)
+        height[1], height[2] = height_processing.clip('-z', origin = z_min, return_clipped = True)
 
         # spliting the mesh along the y-axis
         for k in range(0,3):
-            try:
-                side[0,k] = height[k].clip('y', origin = y_max, invert = False)
-                side[1,k] = height[k].clip('-y', origin = y_max, invert = False).clip('y', origin = y_min, invert = False)
-                side[2,k] = height[k].clip('-y', origin = y_min, invert = False)
-
-                ext_side[0,k] = ext_height[k].clip('y', origin = y_max, invert = False)
-                ext_side[1,k] = ext_height[k].clip('-y', origin = y_max, invert = False).clip('y', origin = y_min, invert = False)
-                ext_side[2,k] = ext_height[k].clip('-y', origin = y_min, invert = False)
-            except ValueError:
-                pass
+            side[0,k], side_processing[k] = height[k].clip('-y', origin = y_max, return_clipped = True)
+            side[1,k], side[2,k] = side_processing[k].clip('-y', origin = y_min, return_clipped = True)
 
         # splitting the mesh along the x-axis
         for j in range(0,3):
             for k in range(0,3):
-                try:
-                    cube[0,j,k] = side[j,k].clip('x', origin = x_max, invert = False)
-                    cube[0,j,k] = cube[0,j,k].split_bodies()
+                cube[0,j,k], cube_processing[j,k] = side[j,k].clip('-x', origin = x_max, return_clipped = True)
+                cube[0,j,k] = cube[0,j,k].split_bodies()
 
-                    ext_cube[0,j,k] = ext_side[j,k].clip('x', origin = x_max, invert = False)
-                    ext_cube[0,j,k] = ext_cube[0,j,k].split_bodies()
-                    
-                    if (j == 1) and (k == 1):
-                        if (max_cuboid == 0):
-                            cube[1,j,k] = pv.MultiBlock([max_cube.triangulate()])
-                        else:
-                            cube[1,j,k] = pv.MultiBlock([max_cuboid.triangulate()])
+                if (j == 1) and (k == 1):
+                    if (max_cuboid == 0):
+                        cube[1,j,k] = pv.MultiBlock([max_cube.triangulate()])
                     else:
-                        cube[1,j,k] = side[j,k].clip('x', origin = x_min, invert = False).clip('-x', origin = x_max, invert = False)
-                        cube[1,j,k] = cube[1,j,k].split_bodies()
+                        cube[1,j,k] = pv.MultiBlock([max_cuboid.triangulate()])
+                    cube[2,j,k] = cube_processing[j,k].clip('x', origin = x_min)
+                else:
+                    cube[1,j,k], cube[2,j,k] = cube_processing[j,k].clip('-x', origin = x_min, return_clipped = True)
+                    cube[1,j,k] = cube[1,j,k].split_bodies()
 
-                        ext_cube[1,j,k] = ext_side[j,k].clip('x', origin = x_min, invert = False).clip('-x', origin = x_max, invert = False)
-                        ext_cube[1,j,k] = ext_cube[1,j,k].split_bodies()
-                        
-                    cube[2,j,k] = side[j,k].clip('-x', origin = x_min, invert = False)
-                    cube[2,j,k] = cube[2,j,k].split_bodies()
-
-                    ext_cube[2,j,k] = ext_side[j,k].clip('-x', origin = x_min, invert = False)
-                    ext_cube[2,j,k] = ext_cube[2,j,k].split_bodies()
-                except ValueError:
-                    pass
+                cube[2,j,k] = cube[2,j,k].split_bodies()
 
         self.plotter.clear()
 
@@ -644,33 +631,30 @@ class MainWindow(Qt.QMainWindow):
         #                         ind += 1
         #                     self.plotter.add_mesh(cube[i,j,k][l], show_edges=True, color=color[ind], opacity=1)
 
-        # # display partitions
-        # for i in range(0,3):
-        #     for j in range(0,3):
-        #         for k in range(0,3):
-        #             # rotate the 8 indicating colors
-        #             if ind == 7:
-        #                 ind = 0
-        #             else:
-        #                 ind += 1
-        #             if (cube[i,j,k]!= 0) and (cube[i,j,k].volume != 0):
-        #                 self.plotter.add_mesh(cube[i,j,k], show_edges=True, color=color[ind], opacity=.6)
+        # display partitions
+        for i in range(0,3):
+            for j in range(0,3):
+                for k in range(0,3):
+                    # rotate the 8 indicating colors
+                    if ind == 7:
+                        ind = 0
+                    else:
+                        ind += 1
+                    if (cube[i,j,k]!= 0) and (cube[i,j,k].volume != 0):
+                        self.plotter.add_mesh(cube[i,j,k], show_edges=True, color=color[ind], opacity=.6)
 
         # append island partitions to the 26 main partitions
-        appended_cube = self.append_island(int_surface, cube)
-        ext_appended_cube = self.append_island(ext_surface, ext_cube)
+        appended_cube = self.append_island(cube)
 
         # rank all partitions by volume in descending order
         ranked_cube = self.rank_partitions(appended_cube)
-        ext_ranked_cube = self.rank_partitions(ext_appended_cube)
 
         # check if the initial partition produces parts larger than the print volume
         size_error = self.partition_size_check(appended_cube)
-        ext_size_error = self.partition_size_check(ext_appended_cube)
 
-        return cube, ext_cube, ranked_cube, ext_ranked_cube, size_error, ext_size_error
+        return cube, ranked_cube, size_error
 
-    def append_island(self, mesh, cube):
+    def append_island(self, cube):
         ''' appending island partitions to the 26 main partitions '''
         # start output text file
         report = open("report.txt","w")
@@ -683,29 +667,36 @@ class MainWindow(Qt.QMainWindow):
         island = []
         island_num = 0
 
-        # separate island partitions (extra[i,j,k])
+        # Find largest connected part within each partition and assigned it to be the "major partition".
+        # The rest will be the "island partitions".
         for i in range(0,3):
             for j in range(0,3):
                 for k in range(0,3):
-                    if (cube[i,j,k] != 0):
+                    if cube[i,j,k] != 0:
                         if cube[i,j,k].n_blocks > 1:
+                            # divide the volumes of disconnected parts within each partition by the volume of the first part
+                            # and find an array of volume ratios
                             cube_num = cube[i,j,k].n_blocks
                             ratio = np.array([])
                             for w in range(1,cube_num):
-                                # ratio = np.append(ratio, np.divide(cube[i,j,k][0].volume, cube[i,j,k][w].volume))
-                                # size is determined with length of partition bounding box diagonal
-                                ratio = np.append(ratio, np.divide(cube[i,j,k][0].length, cube[i,j,k][w].length))
+                                ratio = np.append(ratio, np.divide(cube[i,j,k][0].volume, cube[i,j,k][w].volume))
+                            # find the index of the largest disconnected part within the partition
                             if min(ratio) < 1:
                                 p = np.where(ratio == min(ratio))
                                 p = p[0][0] + 1
                             elif min(ratio) > 1:
                                 p = 0
+                            
+                            # fix block_id formatting
+                            if p < 10:
+                                block_id = 'Block-0' + str(p)
+                            elif p >= 10:
+                                block_id = 'Block-' + str(p)
+
                             extra[i,j,k] = cube[i,j,k].copy()
-                            if (cube[i,j,k]['Block-0' + str(p)].length > mesh.length / 500):
-                                cube[i,j,k] = pv.MultiBlock([cube[i,j,k]['Block-0' + str(p)]])
-                                extra[i,j,k].pop(extra[i,j,k].keys()[p])
-                            else:
-                                cube[i,j,k] = 0
+                            cube[i,j,k] = pv.MultiBlock([cube[i,j,k][block_id]])
+                            extra[i,j,k].pop(extra[i,j,k].keys()[p])
+
                             for v in range(0,extra[i,j,k].n_blocks):
                                 island_name = "extra[ " + str(i) + " " + str(j) + " " + str(k) + " ][ " + str(v) + " ]"
                                 print(island_name, end = "\n", file = report)
@@ -734,146 +725,147 @@ class MainWindow(Qt.QMainWindow):
 
             # initiate variables
             i_pair = np.array([], dtype = object)
-            i_pair_dialen = np.array([], dtype = object)
+            i_pair_vol = np.array([], dtype = object)
             i_append = np.array([], dtype = object)
             j_pair = np.array([], dtype = object)
-            j_pair_dialen = np.array([], dtype = object)
+            j_pair_vol = np.array([], dtype = object)
             j_append = np.array([], dtype = object)
             k_pair = np.array([], dtype = object)
-            k_pair_dialen = np.array([], dtype = object)
+            k_pair_vol = np.array([], dtype = object)
             k_append = np.array([], dtype = object)
             discard = []
-            rslt_num = 0
 
             if (i == 0) or (i == 2):
                 if (cube[1,j,k] != 0) and (extra[i,j,k][l].merge(cube[1,j,k][0]).split_bodies().n_blocks == 1) and \
                 (self.fit_check(extra[i,j,k][l].merge(cube[1,j,k][0])) == True):
                     i_pair = np.append(i_pair, [extra[i,j,k][l].merge(cube[1,j,k][0])])
-                    i_pair_dialen = np.append(i_pair_dialen, [i_pair[len(i_pair)-1].length])
+                    i_pair_vol = np.append(i_pair_vol, [i_pair[len(i_pair)-1].volume])
                     i_append = np.append(i_append, "cube[ 1 "+ str(j) + " " + str(k) + " ][ 0 ]")
                 if extra[1,j,k].n_blocks != 0:
                     extra_num_2 = extra[1,j,k].n_blocks
                     for m in range(0,extra_num_2):
-                        if (extra[1,j,k][m].length != 0) and (extra[i,j,k][l].merge(extra[1,j,k][m]).split_bodies().n_blocks == 1) and \
+                        if (extra[1,j,k][m].volume != 0) and (extra[i,j,k][l].merge(extra[1,j,k][m]).split_bodies().n_blocks == 1) and \
                         (self.fit_check(extra[i,j,k][l].merge(extra[1,j,k][m])) == True):
                             i_pair = np.append(i_pair, [extra[i,j,k][l].merge(extra[1,j,k][m])])
-                            i_pair_dialen = np.append(i_pair_dialen, [i_pair[len(i_pair)-1].length])
+                            i_pair_vol = np.append(i_pair_vol, [i_pair[len(i_pair)-1].volume])
                             i_append = np.append(i_append, "extra[ 1 "+ str(j) + " " + str(k) + " ][ " + str(m) + " ]")
+                        # else:
+                        #     print("Doesn't fit!")
             elif i == 1:
                 if (cube[0,j,k] != 0) and (extra[i,j,k][l].merge(cube[0,j,k][0]).split_bodies().n_blocks == 1) and \
                 (self.fit_check(extra[i,j,k][l].merge(cube[0,j,k][0])) == True):
                     i_pair = np.append(i_pair, [extra[i,j,k][l].merge(cube[0,j,k][0])])
-                    i_pair_dialen = np.append(i_pair_dialen, [i_pair[len(i_pair)-1].length])
+                    i_pair_vol = np.append(i_pair_vol, [i_pair[len(i_pair)-1].volume])
                     i_append = np.append(i_append, "cube[ 0 "+ str(j) + " " + str(k) + " ][ 0 ]")
                 if extra[0,j,k].n_blocks != 0:
                     extra_num_2 = extra[0,j,k].n_blocks
                     for m in range(0,extra_num_2):
-                        if (extra[0,j,k][m].length != 0) and (extra[i,j,k][l].merge(extra[0,j,k][m]).split_bodies().n_blocks == 1) and \
+                        if (extra[0,j,k][m].volume != 0) and (extra[i,j,k][l].merge(extra[0,j,k][m]).split_bodies().n_blocks == 1) and \
                         (self.fit_check(extra[i,j,k][l].merge(extra[0,j,k][m])) == True):
                             i_pair = np.append(i_pair, [extra[i,j,k][l].merge(extra[0,j,k][m])])
-                            i_pair_dialen = np.append(i_pair_dialen, [i_pair[len(i_pair)-1].length])
+                            i_pair_vol = np.append(i_pair_vol, [i_pair[len(i_pair)-1].volume])
                             i_append = np.append(i_append, "extra[ 0 "+ str(j) + " " + str(k) + " ][ " + str(m) + " ]")
                 if (cube[2,j,k] != 0) and (extra[i,j,k][l].merge(cube[2,j,k][0]).split_bodies().n_blocks == 1) and \
                 (self.fit_check(extra[i,j,k][l].merge(cube[2,j,k][0])) == True):
                     i_pair = np.append(i_pair, [extra[i,j,k][l].merge(cube[2,j,k][0])])
-                    i_pair_dialen = np.append(i_pair_dialen, [i_pair[len(i_pair)-1].length])
+                    i_pair_vol = np.append(i_pair_vol, [i_pair[len(i_pair)-1].volume])
                     i_append = np.append(i_append, "cube[ 2 "+ str(j) + " " + str(k) + " ][ 0 ]")
                 if extra[2,j,k].n_blocks != 0:
                     extra_num_2 = extra[2,j,k].n_blocks
                     for m in range(0,extra_num_2):
-                        if (extra[2,j,k][m].length != 0) and (extra[i,j,k][l].merge(extra[2,j,k][m]).split_bodies().n_blocks == 1) and \
+                        if (extra[2,j,k][m].volume != 0) and (extra[i,j,k][l].merge(extra[2,j,k][m]).split_bodies().n_blocks == 1) and \
                         (self.fit_check(extra[i,j,k][l].merge(extra[2,j,k][m])) == True):
                             i_pair = np.append(i_pair, [extra[i,j,k][l].merge(extra[2,j,k][m])])
-                            i_pair_dialen = np.append(i_pair_dialen, [i_pair[len(i_pair)-1].length])
+                            i_pair_vol = np.append(i_pair_vol, [i_pair[len(i_pair)-1].volume])
                             i_append = np.append(i_append, "extra[ 2 "+ str(j) + " " + str(k) + " ][ " + str(m) + " ]")
 
             if (j == 0) or (j == 2):
                 if (cube[i,1,k] != 0) and (extra[i,j,k][l].merge(cube[i,1,k][0]).split_bodies().n_blocks == 1) and \
                 (self.fit_check(extra[i,j,k][l].merge(cube[i,1,k][0])) == True):
                     j_pair = np.append(j_pair, [extra[i,j,k][l].merge(cube[i,1,k][0])])
-                    j_pair_dialen = np.append(j_pair_dialen, [j_pair[len(j_pair)-1].length])
+                    j_pair_vol = np.append(j_pair_vol, [j_pair[len(j_pair)-1].volume])
                     j_append = np.append(j_append, "cube[ " + str(i) + " 1 " + str(k) + " ][ 0 ]")
                 if extra[i,1,k].n_blocks != 0:
                     extra_num_2 = extra[i,1,k].n_blocks
                     for m in range(0,extra_num_2):
-                        if (extra[i,1,k][m].length != 0) and (extra[i,j,k][l].merge(extra[i,1,k][m]).split_bodies().n_blocks == 1) and \
+                        if (extra[i,1,k][m].volume != 0) and (extra[i,j,k][l].merge(extra[i,1,k][m]).split_bodies().n_blocks == 1) and \
                         (self.fit_check(extra[i,j,k][l].merge(extra[i,1,k][m])) == True):
                             j_pair = np.append(j_pair, [extra[i,j,k][l].merge(extra[i,1,k][m])])
-                            j_pair_dialen = np.append(j_pair_dialen, [j_pair[len(j_pair)-1].length])
+                            j_pair_vol = np.append(j_pair_vol, [j_pair[len(j_pair)-1].volume])
                             j_append = np.append(j_append, "extra[ " + str(i) + " 1 " + str(k) + " ][ " + str(m) + " ]")
             elif j == 1:
                 if (cube[i,0,k] != 0) and (extra[i,j,k][l].merge(cube[i,0,k][0]).split_bodies().n_blocks == 1) and \
                 (self.fit_check(extra[i,j,k][l].merge(cube[i,0,k][0])) == True):
                     j_pair = np.append(j_pair, [extra[i,j,k][l].merge(cube[i,0,k][0])])
-                    j_pair_dialen = np.append(j_pair_dialen, [j_pair[len(j_pair)-1].length])
+                    j_pair_vol = np.append(j_pair_vol, [j_pair[len(j_pair)-1].volume])
                     j_append = np.append(j_append, "cube[ " + str(i) + " 0 " + str(k) + " ][ 0 ]")
                 if extra[i,0,k].n_blocks != 0:
                     extra_num_2 = extra[i,0,k].n_blocks
                     for m in range(0,extra_num_2):
-                        if (extra[i,0,k][m].length != 0) and (extra[i,j,k][l].merge(extra[i,0,k][m]).split_bodies().n_blocks == 1) and \
+                        if (extra[i,0,k][m].volume != 0) and (extra[i,j,k][l].merge(extra[i,0,k][m]).split_bodies().n_blocks == 1) and \
                         (self.fit_check(extra[i,j,k][l].merge(extra[i,0,k][m])) == True):
                             j_pair = np.append(j_pair, [extra[i,j,k][l].merge(extra[i,0,k][m])])
-                            j_pair_dialen = np.append(j_pair_dialen, [j_pair[len(j_pair)-1].length])
+                            j_pair_vol = np.append(j_pair_vol, [j_pair[len(j_pair)-1].volume])
                             j_append = np.append(j_append, "extra[ " + str(i) + " 0 " + str(k) + " ][ " + str(m) + " ]")
                 if (cube[i,2,k] != 0) and (extra[i,j,k][l].merge(cube[i,2,k][0]).split_bodies().n_blocks == 1) and \
                 (self.fit_check(extra[i,j,k][l].merge(cube[i,2,k][0])) == True):
                     j_pair = np.append(j_pair, [extra[i,j,k][l].merge(cube[i,2,k][0])])
-                    j_pair_dialen = np.append(j_pair_dialen, [j_pair[len(j_pair)-1].length])
+                    j_pair_vol = np.append(j_pair_vol, [j_pair[len(j_pair)-1].volume])
                     j_append = np.append(j_append, "cube[ " + str(i) + " 2 " + str(k) + " ][ 0 ]")
                 if extra[i,2,k].n_blocks != 0:
                     extra_num_2 = extra[i,2,k].n_blocks
                     for m in range(0,extra_num_2):
-                        if (extra[i,2,k][m].length != 0) and (extra[i,j,k][l].merge(extra[i,2,k][m]).split_bodies().n_blocks == 1) and \
+                        if (extra[i,2,k][m].volume != 0) and (extra[i,j,k][l].merge(extra[i,2,k][m]).split_bodies().n_blocks == 1) and \
                         (self.fit_check(extra[i,j,k][l].merge(extra[i,2,k][m])) == True):
                             j_pair = np.append(j_pair, [extra[i,j,k][l].merge(extra[i,2,k][m])])
-                            j_pair_dialen = np.append(j_pair_dialen, [j_pair[len(j_pair)-1].length])
+                            j_pair_vol = np.append(j_pair_vol, [j_pair[len(j_pair)-1].volume])
                             j_append = np.append(j_append, "extra[ " + str(i) + " 2 " + str(k) + " ][ " + str(m) + " ]")
 
             if (k == 0) or (k == 2):
                 if (cube[i,j,1] != 0) and (extra[i,j,k][l].merge(cube[i,j,1][0]).split_bodies().n_blocks == 1) and \
                 (self.fit_check(extra[i,j,k][l].merge(cube[i,j,1][0])) == True):
                     k_pair = np.append(k_pair, [extra[i,j,k][l].merge(cube[i,j,1][0])])
-                    k_pair_dialen = np.append(k_pair_dialen, [k_pair[len(k_pair)-1].length])
+                    k_pair_vol = np.append(k_pair_vol, [k_pair[len(k_pair)-1].volume])
                     k_append = np.append(k_append, "cube[ " + str(i) + " " + str(j) + " 1 ][ 0 ]")
                 if extra[i,j,1].n_blocks != 0:
                     extra_num_2 = extra[i,j,1].n_blocks
                     for m in range(0,extra_num_2):
-                        if (extra[i,j,1][m].length != 0) and (extra[i,j,k][l].merge(extra[i,j,1][m]).split_bodies().n_blocks == 1) and \
+                        if (extra[i,j,1][m].volume != 0) and (extra[i,j,k][l].merge(extra[i,j,1][m]).split_bodies().n_blocks == 1) and \
                         (self.fit_check(extra[i,j,k][l].merge(extra[i,j,1][m])) == True):
                             k_pair = np.append(k_pair, [extra[i,j,k][l].merge(extra[i,j,1][m])])
-                            k_pair_dialen = np.append(k_pair_dialen, [k_pair[len(k_pair)-1].length])
+                            k_pair_vol = np.append(k_pair_vol, [k_pair[len(k_pair)-1].volume])
                             k_append = np.append(k_append, "extra[ " + str(i) + " " + str(j) + " 1 ][ " + str(m) + " ]")
             elif k == 1:
                 if (cube[i,j,0] != 0 ) and (extra[i,j,k][l].merge(cube[i,j,0][0]).split_bodies().n_blocks == 1) and \
                 (self.fit_check(extra[i,j,k][l].merge(cube[i,j,0][0])) == True):
                     k_pair = np.append(k_pair, [extra[i,j,k][l].merge(cube[i,j,0][0])])
-                    k_pair_dialen = np.append(k_pair_dialen, [k_pair[len(k_pair)-1].length])
+                    k_pair_vol = np.append(k_pair_vol, [k_pair[len(k_pair)-1].volume])
                     k_append = np.append(k_append, "cube[ " + str(i) + " " + str(j) + " 0 ][ 0 ]")
                 if extra[i,j,0].n_blocks != 0:
                     extra_num_2 = extra[i,j,0].n_blocks
                     for m in range(0,extra_num_2):
-                        if (extra[i,j,0][m].length != 0) and (extra[i,j,k][l].merge(extra[i,j,0][m]).split_bodies().n_blocks == 1) and \
+                        if (extra[i,j,0][m].volume != 0) and (extra[i,j,k][l].merge(extra[i,j,0][m]).split_bodies().n_blocks == 1) and \
                         (self.fit_check(extra[i,j,k][l].merge(extra[i,j,0][m])) == True):
                             k_pair = np.append(k_pair, [extra[i,j,k][l].merge(extra[i,j,0][m])])
-                            k_pair_dialen = np.append(k_pair_dialen, [k_pair[len(k_pair)-1].length])
+                            k_pair_vol = np.append(k_pair_vol, [k_pair[len(k_pair)-1].volume])
                             k_append = np.append(k_append, "extra[ " + str(i) + " " + str(j) + " 0 ][ " + str(m) + " ]")
                 if (cube[i,j,2] != 0) and (extra[i,j,k][l].merge(cube[i,j,2][0]).split_bodies().n_blocks == 1) and \
                 (self.fit_check(extra[i,j,k][l].merge(cube[i,j,2][0])) == True):
                     k_pair = np.append(k_pair, [extra[i,j,k][l].merge(cube[i,j,2][0])])
-                    k_pair_dialen = np.append(k_pair_dialen, [k_pair[len(k_pair)-1].length])
+                    k_pair_vol = np.append(k_pair_vol, [k_pair[len(k_pair)-1].volume])
                     k_append = np.append(k_append, "cube[ " + str(i) + " " + str(j) + " 2 ][ 0 ]")
                 if extra[i,j,2].n_blocks != 0:
                     extra_num_2 = extra[i,j,2].n_blocks
                     for m in range(0,extra_num_2):
-                        if (extra[i,j,2][m].length != 0) and (extra[i,j,k][l].merge(extra[i,j,2][m]).split_bodies().n_blocks == 1) and \
+                        if (extra[i,j,2][m].volume != 0) and (extra[i,j,k][l].merge(extra[i,j,2][m]).split_bodies().n_blocks == 1) and \
                         (self.fit_check(extra[i,j,k][l].merge(extra[i,j,2][m])) == True):
                             k_pair = np.append(k_pair, [extra[i,j,k][l].merge(extra[i,j,2][m])])
-                            k_pair_dialen = np.append(k_pair_dialen, [k_pair[len(k_pair)-1].length])
+                            k_pair_vol = np.append(k_pair_vol, [k_pair[len(k_pair)-1].volume])
                             k_append = np.append(k_append, "extra[ " + str(i) + " " + str(j) + " 2 ][ " + str(m) + " ]")
                 
-            # group all possible pairs info into pair_option, append_option, and pair_dialen
+            # group all possible pairs info into pair_option, append_option, and pair_vol
             pair_option = np.append(np.append(i_pair, j_pair), k_pair)
-            pair_dialen = np.append(np.append(i_pair_dialen, j_pair_dialen), k_pair_dialen)
+            pair_vol = np.append(np.append(i_pair_vol, j_pair_vol), k_pair_vol)
             append_option = np.append(np.append(i_append, j_append), k_append)
             
             # post-process option lists
@@ -887,23 +879,22 @@ class MainWindow(Qt.QMainWindow):
             if (discard != None):
                 pair_option = np.delete(pair_option, discard)
                 append_option = np.delete(append_option, discard, 0)
-                pair_dialen = np.delete(pair_dialen, discard)
+                pair_vol = np.delete(pair_vol, discard)
 
             # select smallest pair option
-            if pair_dialen.size != 0:
-                min_pair_dialen = min(pair_dialen)
+            if pair_vol.size != 0:
+                max_pair_vol = max(pair_vol)
             else:
-                min_pair_dialen = 0
+                max_pair_vol = 0
 
             # execute island-appending
-            if min_pair_dialen != 0:
-                # find index of the pair option that has smallest bounding box diagonal length
-                x = np.where(pair_dialen == min_pair_dialen)
+            if max_pair_vol != 0:
+                # find index of the pair option that has smallest volume
+                x = np.where(pair_vol == max_pair_vol)
                 x = x[0][0]
                 # record the island-appending step in report.txt
                 print(append_option[x],"<-- extra[", i, j, k, "][", l, "]", end = "\n", file = report)
                 # assign optimal pair data to the joined-to partition & delete info from the joined-from partition
-                # extra[i,j,k][l] = pv.UnstructuredGrid()
                 if (append_option[x][0] == "e"):
                     extra[int(append_option[x][7]), int(append_option[x][9]), int(append_option[x][11])][int(append_option[x][16])] = pair_option[x]
                 else:
@@ -921,11 +912,11 @@ class MainWindow(Qt.QMainWindow):
         #     os.remove(f)
         
         # section color choices
-        # color = ["y", "g", "r", "cyan","tan", "purple", "w"]
-        # ind = -1
+        color = ["y", "g", "r", "cyan","tan", "purple", "w"]
+        ind = -1
 
-        # # clear plotter
-        # self.plotter.clear()
+        # clear plotter
+        self.plotter.clear()
 
         # # display sections
         # for i in range(0,3):
@@ -937,9 +928,7 @@ class MainWindow(Qt.QMainWindow):
         #             else:
         #                 ind += 1
         #             if cube[i,j,k] != 0:
-        #                 self.plotter.add_mesh(cube[i,j,k], show_edges=True, color=color[ind], opacity=1)
-
-        # self.plotter.add_mesh(cube[1,2,1], show_edges=True, color=color[ind], opacity=1)
+        #                 self.plotter.add_mesh(cube[i,j,k], show_edges=True, color=color[ind], opacity=.8)
 
         return appened_cube
 
@@ -965,96 +954,20 @@ class MainWindow(Qt.QMainWindow):
                     break
             if (break_i == True):
                 break
-
-        # # display partitions if SizeError is raised
-        # if (size_error == True):
-        #     for i in range(0,3):
-        #         for j in range(0,3):
-        #             for k in range(0,3):
-        #                 if cube[i,j,k]!= 0:
-        #                     self.plotter.add_mesh(cube[i,j,k], show_edges=True, color="r", opacity=0.4)
     
         return size_error
 
-    def combine_corner_partitions(self, cube):
-        ''' combine pairs of partitions at the corners to reduce total number of partitions '''
-        # print to report
-        report = open("report.txt", "a")
-        print("\n", file = report)
-        print("Proceed to combine corner partitions...", end = "\n", file = report)
-
-        # indicate corner partition locations
-        corner_ind = [0, 2]
-        for o in corner_ind:
-            for p in corner_ind:
-                for q in corner_ind:
-                    if (cube[1,p,q] != 0) and (cube[o,p,q][0].merge(cube[1,p,q][0]).split_bodies().n_blocks == 1):
-                        o_pair = cube[o,p,q][0].merge(cube[1,p,q][0])
-                        o_pair_dialen = o_pair.length
-                        o_append = [1,p,q]
-                    else:
-                        o_pair = 0
-                        o_pair_dialen = 0
-                        o_append = 0
-                    if (cube[o,1,q] != 0) and (cube[o,p,q][0].merge(cube[o,1,q][0]).split_bodies().n_blocks == 1):
-                        p_pair = cube[o,p,q][0].merge(cube[o,1,q][0])
-                        p_pair_dialen = p_pair.length
-                        p_append = [o,1,q]
-                    else:
-                        p_pair = 0
-                        p_pair_dialen = 0
-                        p_append = 0
-                    if (cube[o,p,1] != 0) and (cube[o,p,q][0].merge(cube[o,p,1][0]).split_bodies().n_blocks == 1):
-                        q_pair = cube[o,p,q][0].merge(cube[o,p,1][0])
-                        q_pair_dialen = q_pair.length
-                        q_append = [o,p,1]
-                    else:
-                        q_pair = 0
-                        q_pair_dialen = 0
-                        q_append = 0
-                    pair_option = [o_pair, p_pair, q_pair]
-                    append_option = [o_append, p_append, q_append]
-                    pair_dialen = np.array([o_pair_dialen, p_pair_dialen, q_pair_dialen])
-                    max_pair_dialen = max(pair_dialen)
-                    if max_pair_dialen != 0:
-                        n = np.where(pair_dialen == max_pair_dialen)
-                        n = n[0][0]
-                        if n == 0:
-                            print("cube[", o, p, q, "][ 0 ] <-- cube[", 1, p, q, "][ 0 ]", end = "\n", file = report)
-                        elif n == 1:
-                            print("cube[", o, p, q, "][ 0 ] <-- cube[", o, 1, q, "][ 0 ]", end = "\n", file = report)
-                        elif n == 2:
-                            print("cube[", o, p, q, "][ 0 ] <-- cube[", o, p, 1, "][ 0 ]", end = "\n", file = report)
-                        cube[o,p,q] = pv.MultiBlock([pair_option[n]])
-                        cube[append_option[n][0], append_option[n][1], append_option[n][2]] = 0
-                    
-        # section color choices
-        color = ["r", "b", "g", "y"]
-        ind = -1
-
-        # display sections
-        for i in range(0,3):
-            for j in range(0,3):
-                for k in range(0,3):
-                    # rotate the 4 indicating colors
-                    if ind == 3:
-                        ind = 0
-                    else:
-                        ind += 1
-                    if cube[i,j,k] != 0:
-                        self.plotter.add_mesh(cube[i,j,k], show_edges=True, color=color[ind], opacity=0.8)
-                        file_name = "section [" + str(i) + "," + str(j) + "," + str(k) +"].stl"
-                        pv.save_meshio("output/"+ file_name, cube[i,j,k][0])
-        
     def rank_partitions(self, cube):
-        ''' rank the 3x3x3 matrix of paritions by bounding box diagonal length from largest to smallest '''
+        ''' rank the 3x3x3 matrix of paritions by volume from largest to smallest '''
+        global ranked_cube_len
+
         # print to report
         report = open("report.txt", "a")
         print("\n", file = report)
         print("Rank partitions:", end = "\n", file = report)
         
         # initiate variables
-        dtype = [('indexes', object), ('box dia length', float), ('number', int)]
+        dtype = [('indexes', object), ('volume', float), ('number', int)]
         ranked_cube = np.zeros(26, dtype=dtype)
         w = -1
 
@@ -1062,17 +975,25 @@ class MainWindow(Qt.QMainWindow):
             for j in range(0,3):
                 for k in range(0,3):
                     if cube[i,j,k] != 0:
-                        # store partition indices, bounding box diagonal length, and number in ranked_cube.
+                        # store partition indices, volume, and number in ranked_cube.
                         # (center cube is excluded from the ranking process)
                         if (i == 1) and (j == 1) and (k == 1):
                             pass
                         else:
                             w += 1
-                            ranked_cube[w] = ([i,j,k], cube[i,j,k].length, w)
-        # # rank the partition by bounding box diagonal length from largest to smallest
-        # ranked_cube = np.sort(ranked_cube, order='box dia length')[::-1]
-        # rank the partition by bounding box diagonal length from smallest to largest
-        ranked_cube = np.sort(ranked_cube, order='box dia length')
+                            ranked_cube[w] = ([i,j,k], cube[i,j,k].volume, w)
+                    else:
+                        print(i,j,k)
+
+        ranked_cube_len = w
+
+        # rank the partition by volume from smallest to largest
+        ranked_cube = np.sort(ranked_cube, order='volume')
+
+        # remove null partitions
+        del_ind = len(ranked_cube) - ranked_cube_len - 1
+        ranked_cube = ranked_cube[del_ind:]
+
         print(ranked_cube, end = "\n", file = report)
 
         return ranked_cube
@@ -1128,7 +1049,7 @@ class MainWindow(Qt.QMainWindow):
         print("\n", file = report)
         print("Combine neighboring partition pairs (largest to smallest):", end = "\n", file = report)
 
-        for w in range(0, 26):
+        for w in range(0, ranked_cube_len):
             # find the x,y,z indices i,j,k
             i = ranked_cube[w][0][0]
             j = ranked_cube[w][0][1]
@@ -1136,13 +1057,13 @@ class MainWindow(Qt.QMainWindow):
 
             # initiate variables
             i_pair = np.array([], dtype = object)
-            i_pair_dialen = np.array([], dtype = object)
+            i_pair_vol = np.array([], dtype = object)
             i_append = np.array([], dtype = object)
             j_pair = np.array([], dtype = object)
-            j_pair_dialen = np.array([], dtype = object)
+            j_pair_vol = np.array([], dtype = object)
             j_append = np.array([], dtype = object)
             k_pair = np.array([], dtype = object)
-            k_pair_dialen = np.array([], dtype = object)
+            k_pair_vol = np.array([], dtype = object)
             k_append = np.array([], dtype = object)
             discard = []
 
@@ -1151,60 +1072,60 @@ class MainWindow(Qt.QMainWindow):
                     if (cube[1,j,k] != 0) and (cube[i,j,k][0].merge(cube[1,j,k][0]).split_bodies().n_blocks == 1) and \
                     (self.fit_check(cube[i,j,k][0].merge(cube[1,j,k][0])) == True):
                         i_pair = np.append(i_pair, [cube[i,j,k][0].merge(cube[1,j,k][0])])
-                        i_pair_dialen = np.append(i_pair_dialen, [i_pair[len(i_pair)-1].length])
+                        i_pair_vol = np.append(i_pair_vol, [i_pair[len(i_pair)-1].volume])
                         i_append = np.append(i_append, [1,j,k])
                 elif (i == 1):
                     if (cube[0,j,k] != 0) and (cube[i,j,k][0].merge(cube[0,j,k][0]).split_bodies().n_blocks == 1) and \
                     (self.fit_check(cube[i,j,k][0].merge(cube[0,j,k][0])) == True):
                         i_pair = np.append(i_pair, [cube[i,j,k][0].merge(cube[0,j,k][0])])
-                        i_pair_dialen = np.append(i_pair_dialen, [i_pair[len(i_pair)-1].length])
+                        i_pair_vol = np.append(i_pair_vol, [i_pair[len(i_pair)-1].volume])
                         i_append = np.append(i_append, [0,j,k])
                     if (cube[2,j,k] != 0) and (cube[i,j,k][0].merge(cube[2,j,k][0]).split_bodies().n_blocks == 1) and \
                     (self.fit_check(cube[i,j,k][0].merge(cube[2,j,k][0])) == True):
                         i_pair = np.append(i_pair, [cube[i,j,k][0].merge(cube[2,j,k][0])])
-                        i_pair_dialen = np.append(i_pair_dialen, [i_pair[len(i_pair)-1].length])
+                        i_pair_vol = np.append(i_pair_vol, [i_pair[len(i_pair)-1].volume])
                         i_append = np.append(i_append, [2,j,k])
 
                 if (j == 0) or (j == 2):
                     if (cube[i,1,k] != 0) and (cube[i,j,k][0].merge(cube[i,1,k][0]).split_bodies().n_blocks == 1) and \
                     (self.fit_check(cube[i,j,k][0].merge(cube[i,1,k][0])) == True):
                         j_pair = np.append(j_pair, [cube[i,j,k][0].merge(cube[i,1,k][0])])
-                        j_pair_dialen = np.append(j_pair_dialen, [j_pair[len(j_pair)-1].length])
+                        j_pair_vol = np.append(j_pair_vol, [j_pair[len(j_pair)-1].volume])
                         j_append = np.append(j_append, [i,1,k])
                 elif (j == 1):
                     if (cube[i,0,k] != 0) and (cube[i,j,k][0].merge(cube[i,0,k][0]).split_bodies().n_blocks == 1) and \
                     (self.fit_check(cube[i,j,k][0].merge(cube[i,0,k][0])) == True):
                         j_pair = np.append(j_pair, [cube[i,j,k][0].merge(cube[i,0,k][0])])
-                        j_pair_dialen = np.append(j_pair_dialen, [j_pair[len(j_pair)-1].length])
+                        j_pair_vol = np.append(j_pair_vol, [j_pair[len(j_pair)-1].volume])
                         j_append = np.append(j_append, [i,0,k])
                     if (cube[i,2,k] != 0) and (cube[i,j,k][0].merge(cube[i,2,k][0]).split_bodies().n_blocks == 1) and \
                     (self.fit_check(cube[i,j,k][0].merge(cube[i,2,k][0])) == True):
                         j_pair = np.append(j_pair, [cube[i,j,k][0].merge(cube[i,2,k][0])])
-                        j_pair_dialen = np.append(j_pair_dialen, [j_pair[len(j_pair)-1].length])
+                        j_pair_vol = np.append(j_pair_vol, [j_pair[len(j_pair)-1].volume])
                         j_append = np.append(j_append, [i,2,k])
 
                 if (k == 0) or (k == 2):
                     if (cube[i,j,1] != 0) and (cube[i,j,k][0].merge(cube[i,j,1][0]).split_bodies().n_blocks == 1) and \
                     (self.fit_check(cube[i,j,k][0].merge(cube[i,j,1][0])) == True):
                         k_pair = np.append(k_pair, [cube[i,j,k][0].merge(cube[i,j,1][0])])
-                        k_pair_dialen = np.append(k_pair_dialen, [k_pair[len(k_pair)-1].length])
+                        k_pair_vol = np.append(k_pair_vol, [k_pair[len(k_pair)-1].volume])
                         k_append = np.append(k_append, [i,j,1])
                 elif (k == 1):
                     if (cube[i,j,0] != 0) and (cube[i,j,k][0].merge(cube[i,j,0][0]).split_bodies().n_blocks == 1) and \
                     (self.fit_check(cube[i,j,k][0].merge(cube[i,j,0][0])) == True):
                         k_pair = np.append(k_pair, [cube[i,j,k][0].merge(cube[i,j,0][0])])
-                        k_pair_dialen = np.append(k_pair_dialen, [k_pair[len(k_pair)-1].length])
+                        k_pair_vol = np.append(k_pair_vol, [k_pair[len(k_pair)-1].volume])
                         k_append = np.append(k_append, [i,j,0])
                     if (cube[i,j,2] != 0) and (cube[i,j,k][0].merge(cube[i,j,2][0]).split_bodies().n_blocks == 1) and \
                     (self.fit_check(cube[i,j,k][0].merge(cube[i,j,2][0])) == True):
                         k_pair = np.append(k_pair, [cube[i,j,k][0].merge(cube[i,j,2][0])])
-                        k_pair_dialen = np.append(k_pair_dialen, [k_pair[len(k_pair)-1].length])
+                        k_pair_vol = np.append(k_pair_vol, [k_pair[len(k_pair)-1].volume])
                         k_append = np.append(k_append, [i,j,2])
 
-                # group all possible pairs info into pair_option, append_option, and pair_dialen
+                # group all possible pairs info into pair_option, append_option, and pair_vol
                 pair_option = np.append(np.append(i_pair, j_pair), k_pair)
                 append_option = np.append(np.append(i_append, j_append), k_append)
-                pair_dialen = np.append(np.append(i_pair_dialen, j_pair_dialen), k_pair_dialen)
+                pair_vol = np.append(np.append(i_pair_vol, j_pair_vol), k_pair_vol)
                 # format append_option so x,y,z indices are kept in arrays of 3
                 row = int((len(append_option) + 1) / 3)
                 append_option = np.reshape(append_option, (row, 3))
@@ -1218,18 +1139,18 @@ class MainWindow(Qt.QMainWindow):
                 if (discard != None):
                     pair_option = np.delete(pair_option, discard)
                     append_option = np.delete(append_option, discard, 0)
-                    pair_dialen = np.delete(pair_dialen, discard)
+                    pair_vol = np.delete(pair_vol, discard)
 
-                # select largest pair option
-                if pair_dialen.size != 0:
-                    min_pair_dialen = min(pair_dialen)
+                # select pair option with smallest volume
+                if pair_vol.size != 0:
+                    max_pair_vol = min(pair_vol)
                 else:
-                    min_pair_dialen = 0
+                    max_pair_vol = 0
 
                 # execute pair-joining
-                if min_pair_dialen != 0:
-                    # find index of the pair option that has largest bounding box diagonal length
-                    x = np.where(pair_dialen == min_pair_dialen)
+                if max_pair_vol != 0:
+                    # find index of the pair option that has smallest volume
+                    x = np.where(pair_vol == max_pair_vol)
                     x = x[0][0]
                     # record the pair-joining step in report.txt
                     print("cube[", i, j, k, "][ 0 ] <-- cube[", ' '.join(map(str, append_option[x])), "][ 0 ]", end = "\n", file = report)
@@ -1248,9 +1169,6 @@ class MainWindow(Qt.QMainWindow):
             os.remove(f)
         
         rslt = pv.MultiBlock()
-        rslt_boundary = pv.MultiBlock()
-        rslt_offset = pv.MultiBlock()
-        rslt_offset_boundary = pv.MultiBlock()
 
         # display partitions
         for i in range(0,3):
@@ -1260,15 +1178,13 @@ class MainWindow(Qt.QMainWindow):
                         if (i == 1) and (j == 1) and (k == 1):
                             rslt.append(cube[i,j,k][0].triangulate())
                         else:
-                            # rslt.append(pv.PolyData(cube[i,j,k][0].points, cube[i,j,k][0].cells))
-                            rslt.append(cube[i,j,k][0].extract_surface().triangulate())
-                            # print(type(cube[i,j,k][0].extract_geometry().triangulate()))
+                            rslt.append(cube[i,j,k][0].extract_geometry().triangulate())
 
                         # count number of resulting partitions
                         rslt_num += 1
-        
+
         self.plotter.clear()
-        self.plotter.add_mesh(rslt, multi_colors = True, show_edges = True, opacity = .9)
+        self.plotter.add_mesh(rslt, show_edges = True, multi_colors = True, opacity = .9)
 
         # save combined partitions
         for v in range(0,rslt.n_blocks):
@@ -1278,16 +1194,10 @@ class MainWindow(Qt.QMainWindow):
         # show number of resulting parts
         print("Resulting Partitions: ", rslt_num)
 
-    def next_cubes_ray(self, value):
+    def next_cubes_ray(self, mesh, max_normal):
         ''' create cubes within the mesh from the face centers of the first cube'''
-        global next_cube_vol, max_normal
+        global next_cube_vol
         global next_rays, next_ints, next_cubes
-
-        # find max cube
-        self.max_cube_ray(value)
-
-        # # track starting time
-        # next_cube_start = time.time()
 
         # initiate variables
         next_cube_vol_sum = 0
@@ -1357,23 +1267,18 @@ class MainWindow(Qt.QMainWindow):
 
             # create cube from nearest vertice
             next_cube_V, next_cube_F, next_cube_vol = self.create_cube(face[2][face[1],:], face_center[i], max_normal[i])
-            next_cubes[i] = self.plotter.add_mesh(pv.PolyData(next_cube_V, next_cube_F), show_edges=True, line_width=3, color="g", opacity=0.6)
+            next_cubes[i] = self.plotter.add_mesh(pv.PolyData(next_cube_V, next_cube_F), show_edges=True, line_width=3, color="y", opacity=0.6)
 
             # next cube volume
             next_cube_vol_sum = next_cube_vol_sum + next_cube_vol
 
         # show packing efficiency
-        next_cube_vol_sum = float(format(next_cube_vol_sum, ".5f"))
-        pack_vol = float(format((max_cube_vol + next_cube_vol_sum), ".5f"))
+        next_cube_vol_sum = float(format(next_cube_vol_sum, ".2f"))
+        pack_vol = float(format((max_cube_vol + next_cube_vol_sum), ".2f"))
         pack_percent = "{:.1%}".format(pack_vol / mesh_vol)
         print("Next Cubes Volume:", next_cube_vol_sum)
         print("Packed Volume:", pack_vol)
         print("Packing Efficiency:", pack_percent)
-
-        # # track starting time
-        # next_cube_end = time.time()
-        # next_cube_run = next_cube_end - next_cube_start
-        # print("Total elapsed run time: %g seconds" % (max_cube_run + next_cube_run))
 
         return
     
