@@ -38,83 +38,34 @@ class MainWindow(Qt.QMainWindow):
         self.open_mesh_action = Qt.QAction('Open Mesh...', self)
         self.open_mesh_action.triggered.connect(self.open_mesh)
         fileMenu.addAction(self.open_mesh_action)
-
-        # set centroid
-        self.skewed_centroid_action = Qt.QAction('Skewed Centroid', self)
-        self.skewed_centroid_action.triggered.connect(self.skewed_centroid_check)
-        fileMenu.addAction(self.skewed_centroid_action)
         
-        # save screenshot
-        self.save_screenshot_action = Qt.QAction('Save Screenshot', self)
-        self.save_screenshot_action.triggered.connect(self.save_screenshot)
-        fileMenu.addAction(self.save_screenshot_action)
-
         # exit button
         exitButton = Qt.QAction('Exit', self)
         exitButton.setShortcut('Ctrl+Q')
         exitButton.triggered.connect(self.close)
         fileMenu.addAction(exitButton)
 
-        # create cubic skeleton (neighbor-selection criteria: min - min)
-        self.cubic_skeleton_min_min_action = Qt.QAction('Cubic Skeleton (min - min)', self)
-        self.cubic_skeleton_min_min_action.triggered.connect(self.cubic_skeleton_min_min)
-        editMenu.addAction(self.cubic_skeleton_min_min_action)
+        # create cubic skeleton
+        self.cubic_skeleton_action = Qt.QAction('Cubic Skeleton', self)
+        self.cubic_skeleton_action.triggered.connect(self.cubic_skeleton)
+        editMenu.addAction(self.cubic_skeleton_action)
 
-        # create cubic skeleton (neighbor-selection criteria: min - max)
-        self.cubic_skeleton_min_max_action = Qt.QAction('Cubic Skeleton (min - max)', self)
-        self.cubic_skeleton_min_max_action.triggered.connect(self.cubic_skeleton_min_max)
-        editMenu.addAction(self.cubic_skeleton_min_max_action)
-
-        # create cubic skeleton (neighbor-selection criteria: max - max)
-        self.cubic_skeleton_max_max_action = Qt.QAction('Cubic Skeleton (max - max)', self)
-        self.cubic_skeleton_max_max_action.triggered.connect(self.cubic_skeleton_max_max)
-        editMenu.addAction(self.cubic_skeleton_max_max_action)
-
-        # create cubic skeleton (neighbor-selection criteria: max - min)
-        self.cubic_skeleton_max_min_action = Qt.QAction('Cubic Skeleton (max - min)', self)
-        self.cubic_skeleton_max_min_action.triggered.connect(self.cubic_skeleton_max_min)
-        editMenu.addAction(self.cubic_skeleton_max_min_action)
-
-        # create cuboid skeleton (neighbor-selection criteria: min - min)
-        self.cuboid_skeleton_min_min_action = Qt.QAction('Cuboid Skeleton (min - min)', self)
-        self.cuboid_skeleton_min_min_action.triggered.connect(self.cuboid_skeleton_min_min)
-        editMenu.addAction(self.cuboid_skeleton_min_min_action)
-
-        # create cuboid skeleton (neighbor-selection criteria: min - max)
-        self.cuboid_skeleton_min_max_action = Qt.QAction('Cuboid Skeleton (min - max)', self)
-        self.cuboid_skeleton_min_max_action.triggered.connect(self.cuboid_skeleton_min_max)
-        editMenu.addAction(self.cuboid_skeleton_min_max_action)
-
-        # create cuboid skeleton (neighbor-selection criteria: max - max)
-        self.cuboid_skeleton_max_max_action = Qt.QAction('Cuboid Skeleton (max - max)', self)
-        self.cuboid_skeleton_max_max_action.triggered.connect(self.cuboid_skeleton_max_max)
-        editMenu.addAction(self.cuboid_skeleton_max_max_action)
-
-        # create cuboid skeleton (neighbor-selection criteria: max - min)
-        self.cuboid_skeleton_max_min_action = Qt.QAction('Cuboid Skeleton (max - min)', self)
-        self.cuboid_skeleton_max_min_action.triggered.connect(self.cuboid_skeleton_max_min)
-        editMenu.addAction(self.cuboid_skeleton_max_min_action)
+        # inserting maximally inscribed cube via ray tracing
+        self.cuboid_skeleton_action = Qt.QAction('Cubic Skeleton - Extended Max Cube', self)
+        self.cuboid_skeleton_action.triggered.connect(self.cuboid_skeleton)
+        editMenu.addAction(self.cuboid_skeleton_action)
         
-        # Show max cube & raytracing process
-        self.max_cube_action = Qt.QAction('Max Cube', self)
-        self.max_cube_action.triggered.connect(self.show_max_cube)
-        editMenu.addAction(self.max_cube_action)
+        self.plotter.set_background(color = 'w')
         
         if show:
             self.show()
 
-        # # turning plotter background white and axes labels black
-        # self.plotter.set_background(color = 'w')
-        # self.plotter.add_axes(interactive=None, line_width=2, color="k", x_color=None, y_color=None, z_color=None, xlabel='X', ylabel='Y', zlabel='Z', labels_off=False, box= None, box_args=None)
-        
-        self.plotter.add_axes(interactive=None, line_width=2, x_color=None, y_color=None, z_color=None, xlabel='X', ylabel='Y', zlabel='Z', labels_off=False, box= None, box_args=None)
-    
+        self.plotter.add_axes(interactive=None, line_width=2, color="k", x_color=None, y_color=None, z_color=None, xlabel='X', ylabel='Y', zlabel='Z', labels_off=False, box= None, box_args=None)
+
     def open_mesh(self):
         """ add a mesh to the pyqt frame """
         global int_surface, ext_surface, mesh_vol, mesh
-        global x_range, y_range, z_range, Vol_centroid
-        global open_mesh_run
-        global mesh_name
+        global x_range, y_range, z_range
 
         # track pre-processing starting time
         open_mesh_start = time.time()
@@ -128,7 +79,6 @@ class MainWindow(Qt.QMainWindow):
         mesh_name, mesh_type = os.path.splitext(file_name)
 
         # read mesh & transform according to principal axes
-        print(file_path)
         pre = trimesh.load(file_path)
         orient = pre.principal_inertia_transform
         pre = pre.apply_transform(orient)
@@ -140,14 +90,8 @@ class MainWindow(Qt.QMainWindow):
         post_file_path = 'data/'+ mesh_name + '_oriented.stl'
         pre.export(post_file_path)
         ext_surface = pv.read(post_file_path)
-
-        # scale meshes accordingly
-        if mesh_name == 'elephant':
-            ext_surface.points *= 12  # Elephant
-        elif mesh_name == 'Bracket S24D1':
-            ext_surface.points /= 10  # Bracket
-        elif mesh_name == 'knight':
-            ext_surface.points /= 2 # Knight
+        ext_surface.points /= 20
+        # ext_surface.points *= 10
 
         # create internal offset
         thickness = 0.1 # inches
@@ -170,11 +114,10 @@ class MainWindow(Qt.QMainWindow):
         print("Mesh Type:", mesh_type[1:])
 
         # find mesh centroid and translate the mesh so that's the origin
-        Vol_centroid = np.array([0,0,0])
-        self.skewed_centroid_action.setCheckable(True)
+        self.centroid(ext_surface)
 
         # reset plotter
-        self.reset_plotter(Vol_centroid)
+        self.reset_plotter()
 
         # find the max and min of x,y,z axes of mesh
         ranges = mesh.bounds
@@ -194,43 +137,22 @@ class MainWindow(Qt.QMainWindow):
         open_mesh_run = open_mesh_end - open_mesh_start
         print("Pre-Processing run time: %g seconds" % (open_mesh_run))
 
-        print("Mesh Cells:", mesh.n_cells)
-
-    def save_screenshot(self):
-        ''' saves screenshot of current render window'''
-        screenshot_path = 'screenshot/' + mesh_name + '.png'
-        self.plotter.screenshot(screenshot_path)
-
-    def skewed_centroid_check(self):
-        ''' depending if the menu item is checked or not, the centroid is either skewed 
-        with the 2nd moment of inertia or being the origin of the principal axes '''
-
-        if self.skewed_centroid_action.isChecked():
-            Vol_centroid = self.centroid(ext_surface)
-        else:
-            Vol_centroid = np.array([0,0,0])
-
-        self.reset_plotter(Vol_centroid)
-
-        return Vol_centroid
-
-    def reset_plotter(self, Vol_centroid):
+    def reset_plotter(self):
         """ clear plotter of mesh or interactive options """
         # clear plotter
         self.plotter.clear()
         
         # callback opened mesh
-        # self.plotter.add_mesh(ext_surface, show_edges = True, color="w", opacity=0.6)
-        self.plotter.add_mesh(mesh, show_edges = True, color="w", opacity=0.3)
+        self.plotter.add_mesh(ext_surface, show_edges = True, color="w", opacity=0.6)
         
         # show origin
         self.plotter.add_axes_at_origin(xlabel='X', ylabel='Y', zlabel='Z', line_width=6, labels_off=True)
 
-        self.plotter.add_mesh(pv.PolyData(Vol_centroid), color='r', point_size=40, render_points_as_spheres=True)
+        self.plotter.add_mesh(pv.PolyData(Vol_centroid), color='r', point_size=20.0, render_points_as_spheres=True)
         
     def centroid(self, mesh):
         """ find centroid volumetrically and indicate on graph """
-        global V
+        global Vol_centroid, V
 
         # find the vertices & the vertex indices of each triangular face
         V = np.array(mesh.points)
@@ -279,267 +201,45 @@ class MainWindow(Qt.QMainWindow):
         # find & show centroid
         centroids = np.asarray(centroids)
         Vol_centroid = [Sum_vol_x, Sum_vol_y, Sum_vol_z] / Vol_total
-        
-        return Vol_centroid
+        Vol_centroid = np.array([0,0,0])
     
-    def cubic_skeleton_min_min(self):
+    def cubic_skeleton(self):
         ''' fill mesh with cubic skeleton'''
-        global first_combining_order, second_combining_order
-
-        # check which centroid is used
-        Vol_centroid = self.skewed_centroid_check()
-
-        # set combining orders
-        first_combining_order = 'min'
-        second_combining_order = 'min'
-
-        # track algorithm starting time
+        # track starting time
         cubic_skeleton_start = time.time()
 
-        _, max_normal, _ = self.max_cube_ray(int_surface, Vol_centroid)
-        cube, ranked_cube, size_error = self.max_cube_slice(mesh)
+        _, max_normal, _ = self.max_cube_ray(int_surface)
+        appended, ranked_appended, size_error = self.max_cube_slice(mesh)
         # if (size_error == False):
-        #     self.combine_pair_partitions(cube, ranked_cube)
-        cube = self.combine_pair_partitions(cube, ranked_cube)
-        self.output(cube)
-        self.next_cubes_ray(int_surface, max_normal)
-
-        # track algorithm ending time & show duration
-        cubic_skeleton_end = time.time()
-        cubic_skeleton_run = cubic_skeleton_end - cubic_skeleton_start
-        print("Partition run time: %g seconds" % (cubic_skeleton_run))
-
-        # show total run time
-        total_run = open_mesh_run + cubic_skeleton_run
-        print("Total run time: %g seconds" % (total_run))
-
-    def cubic_skeleton_min_max(self):
-        ''' fill mesh with cubic skeleton'''
-        global first_combining_order, second_combining_order
-        
-        # check which centroid is used
-        Vol_centroid = self.skewed_centroid_check()
-
-        # set combining orders
-        first_combining_order = 'min'
-        second_combining_order = 'max'
-
-        # track algorithm starting time
-        cubic_skeleton_start = time.time()
-
-        _, max_normal, _ = self.max_cube_ray(int_surface, Vol_centroid)
-        cube, ranked_cube, size_error = self.max_cube_slice(mesh)
-        # if (size_error == False):
-        #     self.combine_pair_partitions(cube, ranked_cube)
-        cube = self.combine_pair_partitions(cube, ranked_cube)
-        self.output(cube)
+        #     self.combine_pair_partitions(appended, ranked_appended)
+        self.combine_pair_partitions(appended, ranked_appended)
         # self.next_cubes_ray(int_surface, max_normal)
 
-        # track algorithm ending time & show duration
+        # track ending time & duration
         cubic_skeleton_end = time.time()
         cubic_skeleton_run = cubic_skeleton_end - cubic_skeleton_start
         print("Partition run time: %g seconds" % (cubic_skeleton_run))
-
-        # show total run time
-        total_run = open_mesh_run + cubic_skeleton_run
-        print("Total run time: %g seconds" % (total_run))
-
-    def cubic_skeleton_max_max(self):
-        ''' fill mesh with cubic skeleton'''
-        global first_combining_order, second_combining_order
-        
-        # check which centroid is used
-        Vol_centroid = self.skewed_centroid_check()
-
-        # set combining orders
-        first_combining_order = 'max'
-        second_combining_order = 'max'
-
-        # track algorithm starting time
-        cubic_skeleton_start = time.time()
-
-        _, max_normal, _ = self.max_cube_ray(int_surface, Vol_centroid)
-        cube, ranked_cube, size_error = self.max_cube_slice(mesh)
-        # if (size_error == False):
-        #     self.combine_pair_partitions(cube, ranked_cube)
-        cube = self.combine_pair_partitions(cube, ranked_cube)
-        self.output(cube)
-        # self.next_cubes_ray(int_surface, max_normal)
-
-        # track algorithm ending time & show duration
-        cubic_skeleton_end = time.time()
-        cubic_skeleton_run = cubic_skeleton_end - cubic_skeleton_start
-        print("Partition run time: %g seconds" % (cubic_skeleton_run))
-
-        # show total run time
-        total_run = open_mesh_run + cubic_skeleton_run
-        print("Total run time: %g seconds" % (total_run))
-
-    def cubic_skeleton_max_min(self):
-        ''' fill mesh with cubic skeleton'''
-        global first_combining_order, second_combining_order
-        
-        # check which centroid is used
-        Vol_centroid = self.skewed_centroid_check()
-
-        # set combining orders
-        first_combining_order = 'max'
-        second_combining_order = 'min'
-
-        # track algorithm starting time
-        cubic_skeleton_start = time.time()
-
-        _, max_normal, _ = self.max_cube_ray(int_surface, Vol_centroid)
-        cube, ranked_cube, size_error = self.max_cube_slice(mesh)
-        # if (size_error == False):
-        #     self.combine_pair_partitions(cube, ranked_cube)
-        cube = self.combine_pair_partitions(cube, ranked_cube)
-        self.output(cube)
-        # self.next_cubes_ray(int_surface, max_normal)
-
-        # track algorithm ending time & show duration
-        cubic_skeleton_end = time.time()
-        cubic_skeleton_run = cubic_skeleton_end - cubic_skeleton_start
-        print("Partition run time: %g seconds" % (cubic_skeleton_run))
-
-        # show total run time
-        total_run = open_mesh_run + cubic_skeleton_run
-        print("Total run time: %g seconds" % (total_run))
     
-    def cuboid_skeleton_min_min(self):
+    def cuboid_skeleton(self):
         ''' fill mesh with cuboid skeleton'''
-        global first_combining_order, second_combining_order
-        
-        # check which centroid is used
-        Vol_centroid = self.skewed_centroid_check()
-
-        # set combining orders
-        first_combining_order = 'min'
-        second_combining_order = 'min'
-
-        # track algorithm starting time
+        # track starting time
         cuboid_skeleton_start = time.time()
 
-        _, max_normal, intxn = self.max_cube_ray(int_surface, Vol_centroid, ext = True)
-        self.max_cuboid(int_surface, intxn, Vol_centroid, max_normal)
-        cube, ranked_cube, size_error = self.max_cube_slice(mesh)
+        _, max_normal, intxn = self.max_cube_ray(int_surface, ext = True)
+        self.max_cuboid(int_surface, intxn, max_normal)
+        appended, ranked_appended, size_error = self.max_cube_slice(mesh)
         # if (size_error == False):
-        #     self.combine_pair_partitions(cube, ranked_cube)
-        cube = self.combine_pair_partitions(cube, ranked_cube)
-        self.output(cube)
+        #     self.combine_pair_partitions(appended, ranked_appended)
+        self.combine_pair_partitions(appended, ranked_appended)
         
-        # track algorithm ending time & show duration
+        # track ending time & duration
         cuboid_skeleton_end = time.time()
         cuboid_skeleton_run = cuboid_skeleton_end - cuboid_skeleton_start
         print("Partition run time: %g seconds" % (cuboid_skeleton_run))
         
-        # show total run time
-        total_run = open_mesh_run + cuboid_skeleton_run
-        print("Total run time: %g seconds" % (total_run))
-
-    def cuboid_skeleton_min_max(self):
-        ''' fill mesh with cuboid skeleton'''
-        global first_combining_order, second_combining_order
-        
-        # check which centroid is used
-        Vol_centroid = self.skewed_centroid_check()
-
-        # set combining orders
-        first_combining_order = 'min'
-        second_combining_order = 'max'
-
-        # track algorithm starting time
-        cuboid_skeleton_start = time.time()
-
-        _, max_normal, intxn = self.max_cube_ray(int_surface, Vol_centroid, ext = True)
-        self.max_cuboid(int_surface, intxn, Vol_centroid, max_normal)
-        cube, ranked_cube, size_error = self.max_cube_slice(mesh)
-        # if (size_error == False):
-        #     self.combine_pair_partitions(cube, ranked_cube)
-        cube = self.combine_pair_partitions(cube, ranked_cube)
-        self.output(cube)
-        
-        # track algorithm ending time & show duration
-        cuboid_skeleton_end = time.time()
-        cuboid_skeleton_run = cuboid_skeleton_end - cuboid_skeleton_start
-        print("Partition run time: %g seconds" % (cuboid_skeleton_run))
-        
-        # show total run time
-        total_run = open_mesh_run + cuboid_skeleton_run
-        print("Total run time: %g seconds" % (total_run))
-    
-    def cuboid_skeleton_max_max(self):
-        ''' fill mesh with cuboid skeleton'''
-        global first_combining_order, second_combining_order
-        
-        # check which centroid is used
-        Vol_centroid = self.skewed_centroid_check()
-
-        # set combining orders
-        first_combining_order = 'max'
-        second_combining_order = 'max'
-
-        # track algorithm starting time
-        cuboid_skeleton_start = time.time()
-
-        _, max_normal, intxn = self.max_cube_ray(int_surface, Vol_centroid, ext = True)
-        self.max_cuboid(int_surface, intxn, Vol_centroid, max_normal)
-        cube, ranked_cube, size_error = self.max_cube_slice(mesh)
-        # if (size_error == False):
-        #     self.combine_pair_partitions(cube, ranked_cube)
-        cube = self.combine_pair_partitions(cube, ranked_cube)
-        self.output(cube)
-        
-        # track algorithm ending time & show duration
-        cuboid_skeleton_end = time.time()
-        cuboid_skeleton_run = cuboid_skeleton_end - cuboid_skeleton_start
-        print("Partition run time: %g seconds" % (cuboid_skeleton_run))
-        
-        # show total run time
-        total_run = open_mesh_run + cuboid_skeleton_run
-        print("Total run time: %g seconds" % (total_run))
-
-    def cuboid_skeleton_max_min(self):
-        ''' fill mesh with cuboid skeleton'''
-        global first_combining_order, second_combining_order
-        
-        # check which centroid is used
-        Vol_centroid = self.skewed_centroid_check()
-
-        # set combining orders
-        first_combining_order = 'max'
-        second_combining_order = 'min'
-
-        # track algorithm starting time
-        cuboid_skeleton_start = time.time()
-
-        _, max_normal, intxn = self.max_cube_ray(int_surface, Vol_centroid, ext = True)
-        self.max_cuboid(int_surface, intxn, Vol_centroid, max_normal)
-        cube, ranked_cube, size_error = self.max_cube_slice(mesh)
-        # if (size_error == False):
-        #     self.combine_pair_partitions(cube, ranked_cube)
-        cube = self.combine_pair_partitions(cube, ranked_cube)
-        self.output(cube)
-        
-        # track algorithm ending time & show duration
-        cuboid_skeleton_end = time.time()
-        cuboid_skeleton_run = cuboid_skeleton_end - cuboid_skeleton_start
-        print("Partition run time: %g seconds" % (cuboid_skeleton_run))
-        
-        # show total run time
-        total_run = open_mesh_run + cuboid_skeleton_run
-        print("Total run time: %g seconds" % (total_run))
-
-    def show_max_cube(self):
-        # check which centroid is used
-        Vol_centroid = self.skewed_centroid_check()
-        
-        _, max_normal, intxn = self.max_cube_ray(int_surface, Vol_centroid, ext = True)
-        self.max_cuboid(int_surface, intxn, Vol_centroid, max_normal)
-        
-    def max_cube_ray(self, mesh, Vol_centroid, ext = False):
+    def max_cube_ray(self, mesh, ext = False):
         """ add a maximally inscribed cube within the opened mesh (via ray tracing) """
-        global r_len
+        global Vol_centroid, r_len
         global face_center, max_cube_vol, max_cube, max_cuboid
         global max_cube_start, max_cube_end, max_cube_run
         global max_cube_V, max_cube_F
@@ -550,6 +250,10 @@ class MainWindow(Qt.QMainWindow):
 
         # find mesh vertices
         V = np.array(mesh.points)
+
+        # show centroid
+        # Vol_centroid = np.array([0,0,0]) # overwrite centroid with origin at principle axes
+        self.plotter.add_mesh(pv.PolyData(Vol_centroid), color='r', point_size=20.0, render_points_as_spheres=True)
 
         # find the nearest possible cube vertex from top rays & mesh intersection
         top_vert = self.cube_center_ray(mesh, Vol_centroid, 'z')
@@ -573,7 +277,7 @@ class MainWindow(Qt.QMainWindow):
         # create and show max cube
         max_cube_V, max_cube_F, max_cube_vol = self.create_cube(intxn, Vol_centroid, np.array([0,0,Vol_centroid[2]]))
         max_cube = pv.PolyData(max_cube_V, max_cube_F)
-        self.plotter.add_mesh(max_cube, show_edges=True, line_width=5, color="orange", opacity = 0.8)
+        self.plotter.add_mesh(max_cube, show_edges=True, line_width=3, color="orange")
 
         # find & show max cube face centers
         cell_center = pv.PolyData(max_cube_V, max_cube_F).cell_centers()
@@ -605,11 +309,6 @@ class MainWindow(Qt.QMainWindow):
         r_int = []
         ori_r_int = []
 
-        l_wid = 10
-        pt_size = 25
-        rays = [0] * 4
-        ints = [0] * 4
-
         # set ray length
         r_len = np.sqrt((x_range/2)**2 + (y_range/2)**2 + (z_range/2)**2)
         
@@ -634,10 +333,6 @@ class MainWindow(Qt.QMainWindow):
 
                 # perform ray trace
                 r_pts, _ = mesh.ray_trace(start, r_end[j])
-
-                # show rays
-                # rays[j] = self.plotter.add_mesh(pv.Line(Vol_centroid, r_end[j]), color='w', line_width=l_wid)
-                # ints[j] = self.plotter.add_mesh(pv.PolyData(r_pts[0]), color='w', point_size=pt_size)
 
                 # create an array of ray intersections
                 r_int = np.append(r_int, r_pts[0])
@@ -687,8 +382,6 @@ class MainWindow(Qt.QMainWindow):
 
     def create_cube(self, vertex, starting_pt, axis):
         ''' create cube from the nearest pt & centroid '''
-        global edge_length
-
         if (axis[0] == 0) and (axis[1] == 0) and (axis[2] == 0):
             axis[2] = 1
             vert_trans = np.array([0,0,0])
@@ -723,8 +416,6 @@ class MainWindow(Qt.QMainWindow):
         trans_dir = trans_dis / np.linalg.norm(trans_dis)
         dia_dis = np.sqrt((V_1[0]-cube_V_start_center[0])**2 + (V_1[1]-cube_V_start_center[1])**2 + (V_1[2]-cube_V_start_center[2])**2)
         half_edge = np.ones((4,1)) * [trans_dir] * dia_dis * np.sin(np.pi/4)
-        edge_length = dia_dis * np.sin(np.pi/4) * 2
-        print("Center cube edge length:", edge_length)
         cube_trans = np.asarray(2*half_edge, dtype=np.float64)
 
         # construct the cube
@@ -752,53 +443,34 @@ class MainWindow(Qt.QMainWindow):
         R = lambdify(t, R_t)
         return R
 
-    def max_cuboid(self, mesh, nearest_pt, Vol_centroid, max_normal):
+    def max_cuboid(self, mesh, furthest_pt, max_normal):
         ''' extend max cube into maximally inscribed cuboid '''
         global face_center, max_cuboid, max_cuboid_vol
-        # fix max_normals
-        dir_check = (face_center - Vol_centroid) * 2 / edge_length
-        x_check = np.abs(np.around(max_normal[0,0] - dir_check[0,0]))
-        y_check = np.abs(np.around(max_normal[0,1] - dir_check[0,1]))
-        z_check = np.abs(np.around(max_normal[0,2] - dir_check[0,2]))
-        print(x_check)
-        print(y_check)
-        print(z_check)
 
-        print(max_normal)
-        print(dir_check)
-
-        if (x_check == 2) or (y_check == 2) or (z_check == 2):
-            max_normal = -max_normal
- 
         # find the 3 out of 6 normal directions the max cube can be extended towards
         ext_dir = np.empty(shape=(3,3)) 
-        main_dir = nearest_pt - Vol_centroid
-
+        main_dir = Vol_centroid - furthest_pt
         ind = 0
         for i in range(0, 6):
-            if np.dot(main_dir, max_normal[i]) < 0:
-                ext_dir[ind] = max_normal[i]
-                ind += 1
+            if np.dot(max_normal[i,:], main_dir) > 0:
+                ext_dir[ind,:] = max_normal[i,:]
+                ind +=1
 
         # extend faces by shooting a ray from the 4 vertices on each extendable face
         # in the direction of its face normal. Find the nearest intersection and
         # it would be the limit of extension for that face
         for i in range(0, 3):
-            F_ind = np.where((np.around(max_normal) == np.around(ext_dir[i])).all(axis=1))
-            F_ind = F_ind[0][0]
+            F_ind = np.where((max_normal == ext_dir[i]).all(axis=1))
             np.reshape(max_cube_F, (6,5))
             faces = np.reshape(max_cube_F, (6,5))
-            print(faces)
-            V_ind = faces[F_ind, 1:5]
-            print(V_ind)
+            V_ind = faces[F_ind][0,1:5]
             current_V = np.vstack([max_cube_V[V_ind[0]], max_cube_V[V_ind[1]], max_cube_V[V_ind[2]], max_cube_V[V_ind[3]]])
-            print(current_V)
             ext_V = self.ext_ray(mesh, current_V, ext_dir[i])
             max_cube_V[V_ind] = ext_V
 
         # create & show extended max cube
         max_cuboid = pv.PolyData(max_cube_V, max_cube_F)
-        self.plotter.add_mesh(max_cuboid, show_edges=True, line_width=5, color="y", opacity = 0.4)
+        self.plotter.add_mesh(max_cuboid, show_edges=True, color="y")
 
         # find face centers of extended max cube
         cell_center = max_cuboid.cell_centers()
@@ -814,24 +486,16 @@ class MainWindow(Qt.QMainWindow):
     def ext_ray(self, mesh, current_V, ext_dir):
         ''' shoot rays from vertices of a cube face towards face normal & obtain intersections with mesh '''
         # initialize variables
+        # r_len = np.sqrt((x_range/2)**2 + (y_range/2)**2 + (z_range/2)**2)
         ext_end = current_V + ext_dir * np.ones((4,1)) * r_len
+        ext_int = [None] * 4
         ext_dis = np.zeros(4)
-        ext_rays = [0] * 6 * r_num
-        ext_ints = [0] * 6 * r_num
-
-        # set raytracing parameters
-        l_wid = 3
-        pt_size = 10
 
         # perform ray tracing per extending face vertex
         for i in range(0,4):
-            ext_int, _ = mesh.ray_trace(current_V[i], ext_end[i])
+            ext_int, ind = mesh.ray_trace(current_V[i], ext_end[i])
             ext_dis[i] = np.sqrt((ext_int[0][0] - current_V[i][0])**2 + (ext_int[0][1] - current_V[i][1])**2
                                  + (ext_int[0][2] - current_V[i][2])**2)
-
-            # show rays
-            # ext_rays[i] = self.plotter.add_mesh(pv.Line(current_V[i], ext_end[i]), color='w', line_width=l_wid)
-            # ext_ints[i] = self.plotter.add_mesh(pv.PolyData(ext_int[0]), color='w', point_size=pt_size)
 
         # extend vertices by the shortest intersection distance
         ext_V = current_V + ext_dir * np.ones((4,1)) * min(ext_dis)
@@ -888,7 +552,6 @@ class MainWindow(Qt.QMainWindow):
         face_center_x = []
         face_center_y = []
         face_center_z = []
-        initial_partition_num = 0
 
         # assign corresponding face_centers to x_max, x_min, y_max, y_min, z_max, z_min
         for i in range(0,6):
@@ -938,7 +601,6 @@ class MainWindow(Qt.QMainWindow):
             for k in range(0,3):
                 cube[0,j,k], cube_processing[j,k] = side[j,k].clip('-x', origin = x_max, return_clipped = True)
                 cube[0,j,k] = cube[0,j,k].split_bodies()
-                initial_partition_num += cube[0,j,k].n_blocks
 
                 if (j == 1) and (k == 1):
                     if (max_cuboid == 0):
@@ -949,14 +611,10 @@ class MainWindow(Qt.QMainWindow):
                 else:
                     cube[1,j,k], cube[2,j,k] = cube_processing[j,k].clip('-x', origin = x_min, return_clipped = True)
                     cube[1,j,k] = cube[1,j,k].split_bodies()
-                    initial_partition_num += cube[1,j,k].n_blocks
 
                 cube[2,j,k] = cube[2,j,k].split_bodies()
-                initial_partition_num += cube[2,j,k].n_blocks
 
-        print("Initial Partition:", initial_partition_num)
-
-        # self.plotter.clear()
+        self.plotter.clear()
 
         # partition color choices
         color = ["brown","g", "y", "r","w","purple","tan", "cyan","grey"]
@@ -990,15 +648,15 @@ class MainWindow(Qt.QMainWindow):
         # distinguish island partitions (disconnected w/in each region) from major (largest w/in each region) partitions,
         # then append them to major partitions w/in the 26 regions
         major, extra, island, island_num = self.distinguish_island(cube)
-        cube = self.append_island(major, extra, island, island_num)
+        appended = self.append_island(major, extra, island, island_num)
 
         # rank all partitions by volume in descending order
-        ranked_cube = self.rank_partitions(cube)
+        ranked_appended = self.rank_partitions(appended)
 
         # check if the initial partition produces parts larger than the print volume
-        size_error = self.partition_size_check(cube)
+        size_error = self.partition_size_check(appended)
 
-        return cube, ranked_cube, size_error
+        return appended, ranked_appended, size_error
 
     def distinguish_island(self, cube):
         ''' distinguishng island partitions (disconnected w/in each region) from the major (largest w/in each region) partitions '''
@@ -1069,8 +727,6 @@ class MainWindow(Qt.QMainWindow):
 
         # initiate variables
         exclude = ["major[ 1 1 1 ][ 0 ]"]
-
-        print("First combining order:", first_combining_order)
 
         # merge the island partitions with neighboring major/island partitions
         for v in range(0,island_num):
@@ -1240,17 +896,14 @@ class MainWindow(Qt.QMainWindow):
 
             # select smallest pair option
             if pair_vol.size != 0:
-                if first_combining_order == 'min':
-                    selected_pair_vol = min(pair_vol)
-                elif first_combining_order == 'max':
-                    selected_pair_vol = max(pair_vol)
+                max_pair_vol = max(pair_vol)
             else:
-                selected_pair_vol = 0
+                max_pair_vol = 0
 
             # execute island-appending
-            if selected_pair_vol != 0:
+            if max_pair_vol != 0:
                 # find index of the pair option that has smallest volume
-                p = np.where(pair_vol == selected_pair_vol)
+                p = np.where(pair_vol == max_pair_vol)
                 p = p[0][0]
 
                 # record the island-appending step in report.txt
@@ -1281,20 +934,20 @@ class MainWindow(Qt.QMainWindow):
         color = ["y", "g", "r", "cyan","tan", "purple", "w"]
         ind = -1
 
-        # # clear plotter
-        # self.plotter.clear()
+        # clear plotter
+        self.plotter.clear()
 
-        # # display sections
-        # for i in range(0,3):
-        #     for j in range(0,3):
-        #         for k in range(0,3):
-        #             # rotate the 6 indicating colors
-        #             if ind == 5:
-        #                 ind = 0
-        #             else:
-        #                 ind += 1
-        #             if major[i,j,k] != 0:
-        #                 self.plotter.add_mesh(major[i,j,k], show_edges=True, color=color[ind], opacity=.8)
+        # display sections
+        for i in range(0,3):
+            for j in range(0,3):
+                for k in range(0,3):
+                    # rotate the 6 indicating colors
+                    if ind == 5:
+                        ind = 0
+                    else:
+                        ind += 1
+                    if major[i,j,k] != 0:
+                        self.plotter.add_mesh(major[i,j,k], show_edges=True, color=color[ind], opacity=.8)
 
         return appened_cube
 
@@ -1325,7 +978,7 @@ class MainWindow(Qt.QMainWindow):
 
     def rank_partitions(self, cube):
         ''' rank the 3x3x3 matrix of paritions by volume from largest to smallest '''
-        global ranked_cube_len
+        global ranked_appended_len
 
         # print to report
         report = open("report.txt", "a")
@@ -1334,76 +987,42 @@ class MainWindow(Qt.QMainWindow):
         
         # initiate variables
         dtype = [('indexes', object), ('volume', float), ('number', int)]
-        ranked_cube = np.zeros(26, dtype=dtype)
+        ranked_appended = np.zeros(26, dtype=dtype)
         w = -1
 
         for i in range(0,3):
             for j in range(0,3):
                 for k in range(0,3):
                     if cube[i,j,k] != 0:
-                        # store partition indices, volume, and number in ranked_cube.
+                        # store partition indices, volume, and number in ranked_appended.
                         # (center cube is excluded from the ranking process)
                         if (i == 1) and (j == 1) and (k == 1):
                             pass
                         else:
                             w += 1
-                            ranked_cube[w] = ([i,j,k], cube[i,j,k].volume, w)
-                    # else:
-                    #     print(i,j,k)
+                            ranked_appended[w] = ([i,j,k], cube[i,j,k].volume, w)
+                    else:
+                        print(i,j,k)
 
-        ranked_cube_len = w
+        ranked_appended_len = w
 
         # rank the partition by volume from smallest to largest
-        ranked_cube = np.sort(ranked_cube, order='volume')
+        ranked_appended = np.sort(ranked_appended, order='volume')
 
         # remove null partitions
-        del_ind = len(ranked_cube) - ranked_cube_len - 1
-        ranked_cube = ranked_cube[del_ind:]
+        del_ind = len(ranked_appended) - ranked_appended_len - 1
+        ranked_appended = ranked_appended[del_ind:]
 
-        print(ranked_cube, end = "\n", file = report)
+        print(ranked_appended, end = "\n", file = report)
 
-        return ranked_cube
-
-    def show_partitions(self, cube):
-        ''' show the info of resulting paritions '''
-        # print to report
-        report = open("report.txt", "a")
-        print("\n", file = report)
-        print("Show partitions:", end = "\n", file = report)
-        
-        # initiate variables
-        dtype = [('volume', float), ('number', int)]
-        show_cube = np.zeros(26, dtype=dtype)
-        w = -1
-
-        for i in range(0,3):
-            for j in range(0,3):
-                for k in range(0,3):
-                    if cube[i,j,k] != 0:
-                        # store partition indices, volume, and number in ranked_cube.
-                        # (center cube is excluded from the ranking process)
-                        if (i == 1) and (j == 1) and (k == 1):
-                            pass
-                        else:
-                            w += 1
-                            show_cube[w] = (cube[i,j,k].volume, w)
-                    # else:
-                    #     print(i,j,k)
-
-        show_cube_len = w
-
-        # remove null partitions
-        del_ind = len(show_cube) - show_cube_len - 1
-        show_cube = show_cube[: -del_ind]
-
-        print(show_cube, end = "\n", file = report)
+        return ranked_appended
     
     def fit_check(self, partition):
         ''' check if the joined partition is within the pre-determined print volume '''
         # set 3D printer print volume
         printer_x_dim = 9.0
-        printer_y_dim = 5.5
-        printer_z_dim = 5.5
+        printer_y_dim = 5.9
+        printer_z_dim = 5.0
         # initialize fit & orientation check
         fit = False
         ori_check = np.zeros(6)
@@ -1437,26 +1056,23 @@ class MainWindow(Qt.QMainWindow):
 
         return fit
 
-    def combine_pair_partitions(self, cube, ranked_cube):
+    def combine_pair_partitions(self, cube, ranked_appended):
         ''' trying to combine with all possible neighbors
         and selecting the pair that fits inside the preset print volume '''
         # initiate variable
         used = [[1,1,1]]
-        last_ranked_cube_len = 0
+        rslt_num = 0
 
         # print to report
         report = open("report.txt", "a")
         print("\n", file = report)
         print("Combine neighboring partition pairs (largest to smallest):", end = "\n", file = report)
 
-        print("Second combining order:", second_combining_order)
-
-        # while (ranked_cube_len != last_ranked_cube_len):
-        for w in range(0, ranked_cube_len):
+        for w in range(0, ranked_appended_len):
             # find the x,y,z indices i,j,k
-            i = ranked_cube[w][0][0]
-            j = ranked_cube[w][0][1]
-            k = ranked_cube[w][0][2]
+            i = ranked_appended[w][0][0]
+            j = ranked_appended[w][0][1]
+            k = ranked_appended[w][0][2]
 
             # initiate variables
             i_pair = np.array([], dtype = object)
@@ -1546,17 +1162,14 @@ class MainWindow(Qt.QMainWindow):
 
                 # select pair option with smallest volume
                 if pair_vol.size != 0:
-                    if second_combining_order == 'min':
-                        selected_pair_vol = min(pair_vol)
-                    elif second_combining_order == 'max':
-                        selected_pair_vol = max(pair_vol)
+                    max_pair_vol = min(pair_vol)
                 else:
-                    selected_pair_vol = 0
+                    max_pair_vol = 0
 
                 # execute pair-joining
-                if selected_pair_vol != 0:
+                if max_pair_vol != 0:
                     # find index of the pair option that has smallest volume
-                    x = np.where(pair_vol == selected_pair_vol)
+                    x = np.where(pair_vol == max_pair_vol)
                     x = x[0][0]
                     # record the pair-joining step in report.txt
                     print("cube[", i, j, k, "][ 0 ] <-- cube[", ' '.join(map(str, append_option[x])), "][ 0 ]", end = "\n", file = report)
@@ -1569,23 +1182,12 @@ class MainWindow(Qt.QMainWindow):
                     row = int((len(used) + 1) / 3)
                     used = np.reshape(used, (row, 3))
 
-            # # update last_ranked_cube_len
-            # last_ranked_cube_len = ranked_cube_len
-
-        # show info of all resulting partitions
-        self.show_partitions(cube)
-
-        return cube
-
-    def output(self, cube):
         # empty the output folder
         files = glob.glob('output/*.stl')
         for f in files:
             os.remove(f)
         
-        # initializing variables
         rslt = pv.MultiBlock()
-        rslt_num = 0
 
         # display partitions
         for i in range(0,3):
@@ -1593,18 +1195,15 @@ class MainWindow(Qt.QMainWindow):
                 for k in range(0,3):
                     if cube[i,j,k] != 0:
                         if (i == 1) and (j == 1) and (k == 1):
-                            # rslt.append(cube[i,j,k][0].triangulate())
-                            # print("Cube Center Volume:", cube[i,j,k][0].triangulate().volume, "in^3")
-                            pass
+                            rslt.append(cube[i,j,k][0].triangulate())
                         else:
                             rslt.append(cube[i,j,k][0].extract_geometry().triangulate())
 
-                            # count number of resulting partitions
-                            rslt_num += 1
+                        # count number of resulting partitions
+                        rslt_num += 1
 
         self.plotter.clear()
-        self.plotter.add_mesh(rslt, show_edges = True, multi_colors = True, opacity = .6)
-        self.plotter.add_mesh(max_cube, show_edges=True, line_width=5, color="orange", opacity = 0.9)
+        self.plotter.add_mesh(rslt, show_edges = True, multi_colors = True, opacity = .9)
 
         # save combined partitions
         for v in range(0,rslt.n_blocks):
@@ -1687,7 +1286,7 @@ class MainWindow(Qt.QMainWindow):
 
             # create cube from nearest vertice
             next_cube_V, next_cube_F, next_cube_vol = self.create_cube(face[2][face[1],:], face_center[i], max_normal[i])
-            next_cubes[i] = self.plotter.add_mesh(pv.PolyData(next_cube_V, next_cube_F), show_edges=True, line_width=5, color="g", opacity=.9)
+            next_cubes[i] = self.plotter.add_mesh(pv.PolyData(next_cube_V, next_cube_F), show_edges=True, line_width=3, color="y", opacity=0.6)
 
             # next cube volume
             next_cube_vol_sum = next_cube_vol_sum + next_cube_vol
