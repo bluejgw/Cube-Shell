@@ -158,7 +158,7 @@ class MainWindow(Qt.QMainWindow):
 
         shell_threshold = imp_dis_max - thickness
         shell = solid.clip_scalar('implicit_distance', value = shell_threshold)
-        int_surface = shell.extract_geometry()
+        int_surface = shell.extract_geometry().triangulate()
 
         meshfix = mf.MeshFix(int_surface)
         meshfix.repair(verbose=True)
@@ -186,7 +186,7 @@ class MainWindow(Qt.QMainWindow):
         print("z:", float(format(z_range, ".2f")), "in")
 
         # mesh volume
-        mesh_vol = float(format(mesh.volume, ".2f"))
+        mesh_vol = float(format(int_surface.volume, ".2f"))
         print("Mesh Volume:", mesh_vol, "in^3")
 
         # track pre-processing ending time & duration
@@ -724,7 +724,6 @@ class MainWindow(Qt.QMainWindow):
         dia_dis = np.sqrt((V_1[0]-cube_V_start_center[0])**2 + (V_1[1]-cube_V_start_center[1])**2 + (V_1[2]-cube_V_start_center[2])**2)
         half_edge = np.ones((4,1)) * [trans_dir] * dia_dis * np.sin(np.pi/4)
         edge_length = dia_dis * np.sin(np.pi/4) * 2
-        print("Center cube edge length:", edge_length)
         cube_trans = np.asarray(2*half_edge, dtype=np.float64)
 
         # construct the cube
@@ -1536,7 +1535,7 @@ class MainWindow(Qt.QMainWindow):
                 # indicate partitions used to form pairs
                 for n in range(0, len(append_option)):
                     for m in range(0, len(used)):
-                        if (np.int(used[m][0]) == append_option[n][0]) and (np.int(used[m][1]) == append_option[n][1]) and (np.int(used[m][2]) == append_option[n][2]):
+                        if (int(used[m][0]) == append_option[n][0]) and (int(used[m][1]) == append_option[n][1]) and (int(used[m][2]) == append_option[n][2]):
                             discard.append(n)
                 # remove partitions used to form pairs
                 if (discard != None):
